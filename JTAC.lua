@@ -142,7 +142,7 @@ function eventJtac:onEvent(event)
 	if (world.event.S_EVENT_MARK_CHANGE == event.id) then
         JTAC.markerIDx = event.idx
        -- trigger.action.outText(" ID Marker : " .. JTAC.markerIDx , 10, false)
-		if (string.match(event.text, "jtac:") ~= nil) then
+		if (string.match(event.text, "jtac ") ~= nil) then
 			if coalition.getPlayers(coalition.side.RED)[1] ~= nil or coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
 				if JTAC.target.laserSpot ~= nil then
 					JTAC.target.laserSpot:destroy()
@@ -153,8 +153,8 @@ function eventJtac:onEvent(event)
 					JTAC.target.irSpot:destroy()
 					JTAC.target.irSpot = nil;
 				end
-				local index1 = string.find(event.text, ";", 0)
-				JTAC.target.laserCode = JTAC.trim(string.sub(event.text, index1 + 1, string.len(event.text)))
+				local index1 = string.find(event.text, "jtac ", 1)
+				JTAC.target.laserCode = JTAC.trim(string.sub(event.text, index1 + 5, string.len(event.text)))
 				JTAC.target.laserPos = event.pos
                 JTAC.target.irPos = event.pos
                 JTAC.target.scanPos = event.pos
@@ -313,6 +313,12 @@ end;
 function JTAC.setTargetPriority(priority)
     JTAC.targetPriority = priority
     debugMsg("Target Priority set to: " .. priority)
+    
+    -- Refresh target menu if JTAC is active
+    if JTAC.support == false and (JTAC.target.droneName ~= "" or JTAC.target.groundName ~= "") then
+        debugMsg("Refreshing target menu with new priority...")
+        JTAC.NewMarkerScan()
+    end
 end;
 
 function JTAC.categorizeTarget(unit)
@@ -1221,8 +1227,8 @@ local function initialize()
 
     world.addEventHandler(eventJtac);
     timer.scheduleFunction(JTAC.setAvailability, nil, timer.getTime() + 1)
-    debugMsg("JTAC LOADED!", true)
     debugMsg("JTAC LOADED!")
+
 end
 
 -- Start initialization
