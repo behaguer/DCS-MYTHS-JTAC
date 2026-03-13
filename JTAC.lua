@@ -350,14 +350,17 @@ function JTAC.requestDrone()
             JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 7, 1, false)
             if JTAC.isLaseAvailable == true then
                 if (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == false) then
-                    timer.scheduleFunction(JTAC.createDroneDelayed, nil, timer.getTime() + JTAC.target.waitTime)
-                    JTAC.MESSAGES.setMessageDelayed("COMMAND: Copied, sending Reaper drone to Zone", 10, 12, true)
-                    JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for drone " .. JTAC.target.waitTime .." secs", 10, 12, false)
-                    JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
-                    JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
-                    JTAC.target.droneInFlight = true;
-
-                    JTAC.spendCMDPoints(JTAC.player, 20) -- Spend 20 CMD points for drone request
+                    -- Check if player has enough command tokens before spawning
+                    if JTAC.spendCMDPoints(JTAC.player, 20) then
+                        timer.scheduleFunction(JTAC.createDroneDelayed, nil, timer.getTime() + JTAC.target.waitTime)
+                        JTAC.MESSAGES.setMessageDelayed("COMMAND: Copied, sending Reaper drone to Zone", 10, 12, true)
+                        JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for drone " .. JTAC.target.waitTime .." secs", 10, 12, false)
+                        JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
+                        JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
+                        JTAC.target.droneInFlight = true;
+                    else
+                        JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, insufficient command tokens for drone request.", 10, 12, true)
+                    end
 
                 elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
                     JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, MQ-9 Reaper is on its way yet.", 10, 12, true)
@@ -629,15 +632,18 @@ function JTAC.requestGround()
             JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 7, 1, false)
             if JTAC.isLaseAvailable == true then
                 if (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == false) then
-                    timer.scheduleFunction(JTAC.createGroundDelayed, nil, timer.getTime() + JTAC.target.waitTime)
-                    JTAC.MESSAGES.setMessageDelayed("COMMAND: Copied, sending Ground to Zone.", 10, 12, true)
-                    JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for Ground " .. JTAC.target.waitTime .." secs", 10, 12, false)
-                    JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
-                    JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
-                    JTAC.target.droneInFlight = true;
-                    
-                    JTAC.spendCMDPoints(JTAC.player, 10) -- Spend 10 CMD points for ground request
-                    
+                    -- Check if player has enough command tokens before spawning
+                    if JTAC.spendCMDPoints(JTAC.player, 10) then
+                        timer.scheduleFunction(JTAC.createGroundDelayed, nil, timer.getTime() + JTAC.target.waitTime)
+                        JTAC.MESSAGES.setMessageDelayed("COMMAND: Copied, sending Ground to Zone.", 10, 12, true)
+                        JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for Ground " .. JTAC.target.waitTime .." secs", 10, 12, false)
+                        JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
+                        JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
+                        JTAC.target.droneInFlight = true;
+                    else
+                        JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, insufficient command tokens for ground request.", 10, 12, true)
+                    end
+
                 elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
                     JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true)
                 end
