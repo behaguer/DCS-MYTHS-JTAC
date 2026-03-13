@@ -304,16 +304,10 @@ function JTAC.setAvailability()
 
 end;
 
-function JTAC.MenuOptionOnOff(vars)
-    local gpID = JTAC.playerGroupID
-
-
-end;
-
 function JTAC.setTargetPriority(priority)
     JTAC.targetPriority = priority
     debugMsg("Target Priority set to: " .. priority)
-    
+
     -- Refresh target menu if JTAC is active
     if JTAC.support == false and (JTAC.target.droneName ~= "" or JTAC.target.groundName ~= "") then
         debugMsg("Refreshing target menu with new priority...")
@@ -362,6 +356,9 @@ function JTAC.requestDrone()
                     JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
                     JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
                     JTAC.target.droneInFlight = true;
+
+                    JTAC.spendCMDPoints(JTAC.player, 20) -- Spend 20 CMD points for drone request
+
                 elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
                     JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, MQ-9 Reaper is on its way yet.", 10, 12, true)
                 end
@@ -638,6 +635,9 @@ function JTAC.requestGround()
                     JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
                     JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
                     JTAC.target.droneInFlight = true;
+                    
+                    JTAC.spendCMDPoints(JTAC.player, 10) -- Spend 10 CMD points for ground request
+                    
                 elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
                     JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true)
                 end
@@ -1193,6 +1193,23 @@ function JTAC.removeMenu(gpID)
 	missionCommands.removeItemForGroup(gpID, menuPrinc)
 end;
 
+function JTAC.spendCMDPoints(playerName, cost)
+    if PlayerTrackerInstance then
+        local success = PlayerTrackerInstance:deductCommandTokens(playerName, cost)
+        if success then
+           debugMsg("Player " .. playerName .. " spent " .. cost .. " command tokens. Remaining: " .. PlayerTrackerInstance:getCommandTokens(playerName))
+            return true
+        else
+            debugMsg("Player " .. playerName .. " does not have enough command tokens.")
+            return false
+        end
+    else
+        -- PlayerTrackerInstance doesn't exist, allow operation without cost
+        debugMsg("PlayerTracker not available - allowing operation without command token cost")
+        return true
+    end
+end
+
 function JTAC.setMenu(gpID)
     
     if menuPrinc then
@@ -1201,8 +1218,8 @@ function JTAC.setMenu(gpID)
 
 	menuPrinc = missionCommands.addSubMenuForGroup(gpID, 'JTAC')
 	JTAC.J1 = missionCommands.addSubMenuForGroup(gpID, 'JTAC LASE', menuPrinc)
-	JTAC.JD11 = missionCommands.addCommandForGroup(gpID, 'Request Drone JTAC', JTAC.J1, JTAC.requestDrone, nil)
-	JTAC.JG11 = missionCommands.addCommandForGroup(gpID, 'Request Ground JTAC', JTAC.J1, JTAC.requestGround, nil)
+	JTAC.JD11 = missionCommands.addCommandForGroup(gpID, 'Request Drone JTAC [20 CMD]', JTAC.J1, JTAC.requestDrone, nil)
+	JTAC.JG11 = missionCommands.addCommandForGroup(gpID, 'Request Ground JTAC [10 CMD]', JTAC.J1, JTAC.requestGround, nil)
 	JTAC.O2 = missionCommands.addSubMenuForGroup(gpID, 'OPTIONS', menuPrinc)
 
 	-- Target Priority submenu
