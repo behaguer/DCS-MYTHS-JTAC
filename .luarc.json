@@ -42,7 +42,8 @@
             "unitId",
             "typeBase",
             "dblog",
-            "menuPrinc"
+            "menuPrinc",
+            "PlayerTrackerInstance" 
         ],
         "ignoredFiles": "Disable"
     }
