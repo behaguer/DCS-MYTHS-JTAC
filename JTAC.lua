@@ -897,10 +897,23 @@ end;
 
 function JTAC.targetIRUpdatePos(condition,time) 
         if condition == true and JTAC.target.currentLasedTarget ~= "STOP" then
-            local targetCoord = Unit.getByName(JTAC.target.currentLasedTarget):getPoint()
-            JTAC.target.irSpot:destroy()
-            JTAC.target.irSpot = Spot.createInfraRed(jtacname, nil, targetCoord)
-            return time + 0.15
+            local targetUnit = Unit.getByName(JTAC.target.currentLasedTarget)
+            if targetUnit and targetUnit:isExist() then
+                local targetCoord = targetUnit:getPoint()
+                if JTAC.target.irSpot ~= nil then
+                    JTAC.target.irSpot:destroy()
+                end
+                JTAC.target.irSpot = Spot.createInfraRed(jtacname, nil, targetCoord)
+                return time + 0.15
+            else
+                -- Target unit no longer exists, stop tracking
+                JTAC.target.currentLasedTarget = "STOP"
+                if JTAC.target.irSpot ~= nil then
+                    JTAC.target.irSpot:destroy()
+                    JTAC.target.irSpot = nil
+                end
+                return nil
+            end
         else
             return nil
         end  
@@ -908,10 +921,23 @@ end;
 
 function JTAC.targetLaserUpdatePos(condition,time)
     if condition == true and JTAC.target.currentLasedTarget ~= "STOP" then
-        local targetCoord = Unit.getByName(JTAC.target.currentLasedTarget):getPoint()
-        JTAC.target.laserSpot:destroy()
-        JTAC.target.laserSpot = Spot.createLaser(jtacname, nil, targetCoord, JTAC.target.laserCode)
-        return time + 0.1
+        local targetUnit = Unit.getByName(JTAC.target.currentLasedTarget)
+        if targetUnit and targetUnit:isExist() then
+            local targetCoord = targetUnit:getPoint()
+            if JTAC.target.laserSpot ~= nil then
+                JTAC.target.laserSpot:destroy()
+            end
+            JTAC.target.laserSpot = Spot.createLaser(jtacname, nil, targetCoord, JTAC.target.laserCode)
+            return time + 0.1
+        else
+            -- Target unit no longer exists, stop tracking
+            JTAC.target.currentLasedTarget = "STOP"
+            if JTAC.target.laserSpot ~= nil then
+                JTAC.target.laserSpot:destroy()
+                JTAC.target.laserSpot = nil
+            end
+            return nil
+        end
     else
         return nil
     end 
@@ -1154,7 +1180,7 @@ function JTAC.TARGETMENU.menu(jtacname, markerPos, gpID)
                     GroupPosition = GroupPosition,
                     Type = TYP,
                     TGT = TGT,
-                    currentLasedTarget = JTAC.target.currentLasedTarget,
+                    currentLasedTarget = TGT,
                     Cat = CAT,
                     Objcat = OBJCAT
                 }
