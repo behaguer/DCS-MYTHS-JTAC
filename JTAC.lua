@@ -88,52 +88,64 @@ end
 
 function eventJtac:onEvent(event)
 
-    if (world.event.S_EVENT_BIRTH == event.id) and event.initiator and event.initiator:getPlayerName() then
-		JTAC.player = event.initiator:getPlayerName()               -- player name
-		JTAC.model = event.initiator:getTypeName()                  -- aircraft model
-        JTAC.playerGroupID = event.initiator:getGroup():getID()              -- group ID 
-        JTAC.playerGroupName = event.initiator:getGroup():getName()       -- group Name
-        JTAC.playerUnitName = event.initiator:getName()             -- Pilote Name in DCS
-        JTAC.playerUnit = event.initiator                           -- Unit table
-        JTAC.playerPos = event.initiator:getPoint()            -- Unit position
+    if (world.event.S_EVENT_BIRTH == event.id) and event.initiator then
+        local playerName = event.initiator:getPlayerName()
+        if playerName and playerName ~= "" then
+		    JTAC.player = playerName               -- player name
+		    JTAC.model = event.initiator:getTypeName()                  -- aircraft model
+            JTAC.playerGroupID = event.initiator:getGroup():getID()              -- group ID 
+            JTAC.playerGroupName = event.initiator:getGroup():getName()       -- group Name
+            JTAC.playerUnitName = event.initiator:getName()             -- Pilote Name in DCS
+            JTAC.playerUnit = event.initiator                           -- Unit table
+            JTAC.playerPos = event.initiator:getPoint()            -- Unit position
 
-		theatre = env.mission.theatre
-																	   
-        if JTAC.groupPrefix == true and string.sub(JTAC.playerGroupName,1,4) == JTAC.Prefix  then
-            JTAC.setMenu(JTAC.playerGroupID)
-            JTAC.groupAuth = true
-        elseif JTAC.groupPrefix == false then
-            JTAC.setMenu(JTAC.playerGroupID)
-            JTAC.groupAuth = true
+		    theatre = env.mission.theatre
+																			   
+            if JTAC.groupPrefix == true and string.sub(JTAC.playerGroupName,1,4) == JTAC.Prefix  then
+                JTAC.setMenu(JTAC.playerGroupID)
+                JTAC.groupAuth = true
+            elseif JTAC.groupPrefix == false then
+                JTAC.setMenu(JTAC.playerGroupID)
+                JTAC.groupAuth = true
+            end
         end    
 	end
 
-    if (world.event.S_EVENT_PLAYER_LEAVE_UNIT == event.id) and event.initiator and event.initiator:getPlayerName() then
-        if JTAC.support == false then
-            if JTAC.target.droneName ~= "" then
-                JTAC.dismissPackage("DRONE")
-            elseif JTAC.target.groundName ~= "" then
-                JTAC.dismissPackage("GROUND")
+    if (world.event.S_EVENT_PLAYER_LEAVE_UNIT == event.id) and event.initiator then
+        local playerName = event.initiator:getPlayerName()
+        if playerName and playerName ~= "" then
+            if JTAC.support == false then
+                if JTAC.target.droneName ~= "" then
+                    JTAC.dismissPackage("DRONE")
+                elseif JTAC.target.groundName ~= "" then
+                    JTAC.dismissPackage("GROUND")
+                end
             end
         end
 	end
 
-    if (world.event.S_EVENT_PILOT_DEAD == event.id) and event.initiator and event.initiator:getPlayerName() then
-        if JTAC.support == false then
-            if JTAC.target.droneName ~= "" then
-                JTAC.dismissPackage("DRONE")
-            elseif JTAC.target.groundName ~= "" then
-                JTAC.dismissPackage("GROUND")
+    if (world.event.S_EVENT_PILOT_DEAD == event.id) and event.initiator then
+        local playerName = event.initiator:getPlayerName()
+        if playerName and playerName ~= "" then
+            if JTAC.support == false then
+                if JTAC.target.droneName ~= "" then
+                    JTAC.dismissPackage("DRONE")
+                elseif JTAC.target.groundName ~= "" then
+                    JTAC.dismissPackage("GROUND")
+                end
             end
         end
 	end
 
-    if (world.event.S_EVENT_EJECTION == event.id) and event.initiator and event.initiator:getPlayerName() then
-        if JTAC.support == false then
-            if JTAC.target.droneName ~= "" then
-                JTAC.dismissPackage("DRONE")
-            elseif JTAC.target.groundName ~= "" then
-                JTAC.dismissPackage("GROUND")
+    if (world.event.S_EVENT_EJECTION == event.id) and event.initiator then
+        local playerName = event.initiator:getPlayerName()
+        if playerName and playerName ~= "" then
+            if JTAC.support == false then
+                if JTAC.target.droneName ~= "" then
+                    JTAC.dismissPackage("DRONE")
+                elseif JTAC.target.groundName ~= "" then
+                    JTAC.dismissPackage("GROUND")
+                end
             end
         end
 	end
@@ -153,7 +165,9 @@ function eventJtac:onEvent(event)
 					JTAC.target.irSpot:destroy()
 					JTAC.target.irSpot = nil;
 				end
+
 				local index1 = string.find(event.text, "jtac ", 1)
+
 				JTAC.target.laserCode = JTAC.trim(string.sub(event.text, index1 + 5, string.len(event.text)))
 				JTAC.target.laserPos = event.pos
                 JTAC.target.irPos = event.pos
@@ -166,25 +180,6 @@ function eventJtac:onEvent(event)
 			else
 				debugMsg("There is no player in the mission. Can't request support")
 			end
-		elseif (string.match(event.text, "spot") ~= nil) and (string.match(event.text, "SPOT;") == nil) then
-			if coalition.getPlayers(coalition.side.RED)[1] ~= nil or coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
-				if JTAC.target.laserSpot ~= nil then
-					JTAC.target.laserSpot:destroy()
-					JTAC.target.laserSpot = nil;
-				end
-                if JTAC.target.irSpot ~= nil then
-					JTAC.target.irSpot:destroy()
-					JTAC.target.irSpot = nil;
-				end
-				JTAC.target.laserCode = JTAC.dfaultLaserCode
-				JTAC.target.laserPos = event.pos
-                JTAC.target.irPos = event.pos
-                JTAC.target.scanPos = event.pos
-                debugMsg("You can request drone to IR mark or lase targets now. Code: " .. JTAC.target.laserCode)
-			else
-				debugMsg("There is no player in the mission. Can't request support")
-			end
-		
 		end
     end
 end;
@@ -358,6 +353,7 @@ function JTAC.requestDrone()
                         JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
                         JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
                         JTAC.target.droneInFlight = true;
+
                     else
                         JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, insufficient command tokens for drone request.", 10, 12, true)
                     end
@@ -369,11 +365,11 @@ function JTAC.requestDrone()
                 JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, there is not support available.", 10, 12, true)
             end
         else
-            debugMsg("INFO: You need to create a mark SPOT;XXXX for target in F10 map (where XXXX is the laser code)")
+            JTAC.MESSAGES.setMessageDelayed("You need to create a mark jtac XXXX for target in F10 map (where XXXX is the laser code)")
 
         end
     else
-        debugMsg("Jtac unavalaible , Already in service")
+        JTAC.MESSAGES.setMessageDelayed("Jtac unavalaible , Already in service", 10, 12, true)
             if JTAC.target.droneName ~= "" then
                 debugMsg('Drone: Uzi 1 '..JTAC.target.droneName .. " unavalaible , Already in service")
                 JTAC.JD99 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Dismiss DRONE package', JTAC.N9, JTAC.requestDismissPackage, "DRONE")
@@ -651,7 +647,7 @@ function JTAC.requestGround()
                 JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, there is not support available.", 10, 12, true)
             end
         else
-            debugMsg("INFO: You need to create a mark SPOT;XXXX for target in F10 map (where XXXX is the laser code)")
+            debugMsg("INFO: You need to create a map mark jtac XXXX for target in F10 map (where XXXX is the laser code)")
         end
     else
         debugMsg("Jtac unavalaible , Already in service")
