@@ -89,62 +89,70 @@ end
 function eventJtac:onEvent(event)
 
     if (world.event.S_EVENT_BIRTH == event.id) and event.initiator then
-        local playerName = event.initiator:getPlayerName()
-        if playerName and playerName ~= "" then
-		    JTAC.player = playerName               -- player name
-		    JTAC.model = event.initiator:getTypeName()                  -- aircraft model
-            JTAC.playerGroupID = event.initiator:getGroup():getID()              -- group ID 
-            JTAC.playerGroupName = event.initiator:getGroup():getName()       -- group Name
-            JTAC.playerUnitName = event.initiator:getName()             -- Pilote Name in DCS
-            JTAC.playerUnit = event.initiator                           -- Unit table
-            JTAC.playerPos = event.initiator:getPoint()            -- Unit position
+        if event.initiator and event.initiator.getPlayerName then
+            local playerName = event.initiator:getPlayerName()
+            if playerName and playerName ~= "" then
+		        JTAC.player = playerName               -- player name
+		        JTAC.model = event.initiator:getTypeName()                  -- aircraft model
+                JTAC.playerGroupID = event.initiator:getGroup():getID()              -- group ID 
+                JTAC.playerGroupName = event.initiator:getGroup():getName()       -- group Name
+                JTAC.playerUnitName = event.initiator:getName()             -- Pilote Name in DCS
+                JTAC.playerUnit = event.initiator                           -- Unit table
+                JTAC.playerPos = event.initiator:getPoint()            -- Unit position
 
-		    theatre = env.mission.theatre
-																			   
-            if JTAC.groupPrefix == true and string.sub(JTAC.playerGroupName,1,4) == JTAC.Prefix  then
-                JTAC.setMenu(JTAC.playerGroupID)
-                JTAC.groupAuth = true
-            elseif JTAC.groupPrefix == false then
-                JTAC.setMenu(JTAC.playerGroupID)
-                JTAC.groupAuth = true
+		        theatre = env.mission.theatre
+																				   
+                if JTAC.groupPrefix == true and string.sub(JTAC.playerGroupName,1,4) == JTAC.Prefix  then
+                    JTAC.setMenu(JTAC.playerGroupID)
+                    JTAC.groupAuth = true
+                elseif JTAC.groupPrefix == false then
+                    JTAC.setMenu(JTAC.playerGroupID)
+                    JTAC.groupAuth = true
+                end
             end
         end    
 	end
 
     if (world.event.S_EVENT_PLAYER_LEAVE_UNIT == event.id) and event.initiator then
-        local playerName = event.initiator:getPlayerName()
-        if playerName and playerName ~= "" then
-            if JTAC.support == false then
-                if JTAC.target.droneName ~= "" then
-                    JTAC.dismissPackage("DRONE")
-                elseif JTAC.target.groundName ~= "" then
-                    JTAC.dismissPackage("GROUND")
+        if event.initiator and event.initiator.getPlayerName then
+            local playerName = event.initiator:getPlayerName()
+            if playerName and playerName ~= "" then
+                if JTAC.support == false then
+                    if JTAC.target.droneName ~= "" then
+                        JTAC.dismissPackage("DRONE")
+                    elseif JTAC.target.groundName ~= "" then
+                        JTAC.dismissPackage("GROUND")
+                    end
                 end
             end
         end
 	end
 
     if (world.event.S_EVENT_PILOT_DEAD == event.id) and event.initiator then
-        local playerName = event.initiator:getPlayerName()
-        if playerName and playerName ~= "" then
-            if JTAC.support == false then
-                if JTAC.target.droneName ~= "" then
-                    JTAC.dismissPackage("DRONE")
-                elseif JTAC.target.groundName ~= "" then
-                    JTAC.dismissPackage("GROUND")
+        if event.initiator and event.initiator.getPlayerName then
+            local playerName = event.initiator:getPlayerName()
+            if playerName and playerName ~= "" then
+                if JTAC.support == false then
+                    if JTAC.target.droneName ~= "" then
+                        JTAC.dismissPackage("DRONE")
+                    elseif JTAC.target.groundName ~= "" then
+                        JTAC.dismissPackage("GROUND")
+                    end
                 end
             end
         end
 	end
 
     if (world.event.S_EVENT_EJECTION == event.id) and event.initiator then
-        local playerName = event.initiator:getPlayerName()
-        if playerName and playerName ~= "" then
-            if JTAC.support == false then
-                if JTAC.target.droneName ~= "" then
-                    JTAC.dismissPackage("DRONE")
-                elseif JTAC.target.groundName ~= "" then
-                    JTAC.dismissPackage("GROUND")
+        if event.initiator and event.initiator.getPlayerName then
+            local playerName = event.initiator:getPlayerName()
+            if playerName and playerName ~= "" then
+                if JTAC.support == false then
+                    if JTAC.target.droneName ~= "" then
+                        JTAC.dismissPackage("DRONE")
+                    elseif JTAC.target.groundName ~= "" then
+                        JTAC.dismissPackage("GROUND")
+                    end
                 end
             end
         end
