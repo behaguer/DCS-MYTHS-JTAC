@@ -9,6 +9,7 @@ local eventJtac = {};
 JTAC = {
 
     debug = true,             -- enable debug messages in DCS log and on screen
+    production_mode = false,  -- when true, disables all debug messages even if debug is true
 
     -- Options
     groupPrefix = false,        -- restrict F10 menu to group with specific prefix
@@ -211,17 +212,17 @@ function JTAC.isExcludedTargetName(TGT)
 end
 
 function JTAC.requestDismissPackage(groupType)
-	JTAC.MESSAGES.setMessageDelayed(JTAC.player .." : You can RTB. Thank you for the support.", 10, 2, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : You can RTB. Thank you for the support.", 10, 2, true)
 	timer.scheduleFunction(JTAC.dismissPackage,  groupType, timer.getTime() + 30)
 	if groupType == "DRONE" and Group.getByName(JTAC.target.droneName):getUnit(1) ~= nil then
-		JTAC.MESSAGES.setMessageDelayed("UZI 1: Roger. RTB.", 10, 7, true)
+		JTAC.MESSAGES.setMessageDelayed("UZI 1: Mission over RTB.", 10, 7, true)
 	elseif groupType == "GROUND" and Group.getByName(JTAC.target.groundName):getUnit(1) ~= nil then
-		JTAC.MESSAGES.setMessageDelayed("Axeman 1: Roger. RTB.", 10, 10, true)
+		JTAC.MESSAGES.setMessageDelayed("Axeman 1: Mission over RTB.", 10, 10, true)
 	end
 end
 
 function JTAC.dismissPackage(groupType)
-	JTAC.MESSAGES.setMessageDelayed("[INFO]: " .. groupType  .. " package has left the Zone.", 15, 2, true)
+	JTAC.MESSAGES.setMessageDelayed(groupType  .. " package has left the Zone.", 15, 2, true)
 
 	if groupType == "DRONE" and Group.getByName(JTAC.target.droneName):getUnit(1) ~= nil then
 		JTAC.destroyGroup(JTAC.target.droneName)
@@ -363,21 +364,21 @@ function JTAC.requestDrone()
                         JTAC.target.droneInFlight = true;
 
                     else
-                        JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, insufficient command tokens for drone request.", 10, 12, true)
+                        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, insufficient command tokens for drone request.", 10, 12, true)
                     end
 
                 elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
-                    JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, MQ-9 Reaper is on its way yet.", 10, 12, true)
+                    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, MQ-9 Reaper is on its way yet.", 10, 12, true)
                 end
             else
-                JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, there is not support available.", 10, 12, true)
+                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, there is not support available.", 10, 12, true)
             end
         else
-            JTAC.MESSAGES.setMessageDelayed("You need to create a mark jtac XXXX for target in F10 map (where XXXX is the laser code)")
+            JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"You need to create a mark jtac XXXX for target in F10 map (where XXXX is the laser code)")
 
         end
     else
-        JTAC.MESSAGES.setMessageDelayed("Jtac unavalaible , Already in service", 10, 12, true)
+        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Jtac unavalaible , Already in service", 10, 12, true)
             if JTAC.target.droneName ~= "" then
                 debugMsg('Drone: Uzi 1 '..JTAC.target.droneName .. " unavalaible , Already in service")
                 JTAC.JD99 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Dismiss DRONE package', JTAC.N9, JTAC.requestDismissPackage, "DRONE")
@@ -645,22 +646,22 @@ function JTAC.requestGround()
                         JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
                         JTAC.target.droneInFlight = true;
                     else
-                        JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, insufficient command tokens for ground request.", 10, 12, true)
+                        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,("COMMAND: Negative, insufficient command tokens for ground request.", 10, 12, true)
                     end
 
                 elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
-                    JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true)
+                    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,("COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true)
                 end
             else
-                JTAC.MESSAGES.setMessageDelayed("COMMAND: Negative, there is not support available.", 10, 12, true)
+                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,("COMMAND: Negative, there is not support available.", 10, 12, true)
             end
         else
-            debugMsg("INFO: You need to create a map mark jtac XXXX for target in F10 map (where XXXX is the laser code)")
+            JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"INFO: You need to create a map mark jtac XXXX for target in F10 map (where XXXX is the laser code)", 10, 12, true)
         end
     else
-        debugMsg("Jtac unavalaible , Already in service")
+        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Jtac unavalaible , Already in service", 10, 12, true)
             if JTAC.target.groundName ~= "" then
-                debugMsg('Ground: Axeman 1 '..JTAC.target.groundName .. " unavalaible , Already in service")
+                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,'Ground: Axeman 1 '..JTAC.target.groundName .. " unavalaible , Already in service", 10, 12, true)
                 JTAC.JD99 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Dismiss GROUND package', JTAC.N9, JTAC.requestDismissPackage, "GROUND")
             else
                 return false
@@ -947,15 +948,15 @@ function JTAC.IR.createInfraRedOnMark(vars)
     if vars.Type == nil then
 		vars.Type = "Ground "
 	end
-	JTAC.MESSAGES.setMessageDelayed(JTAC.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with IR laser, sending coordinates... ", 7, 1, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with IR laser, sending coordinates... ", 7, 1, true)
     JTAC.target.currentLasedTarget = "STOP"
 
 	if JTAC.target.irSpot ~= nil then
 		JTAC.target.irSpot:destroy()
 		JTAC.target.irSpot = nil
 	end
-	JTAC.MESSAGES.setMessageDelayed("UZI 1: Roger, painting your target now.... IR Laser is now on. " , 30, 8, true)
-	JTAC.MESSAGES.setMessageDelayed("INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false)  
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"UZI 1: Roger, painting your target now.... IR Laser is now on. " , 30, 8, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false)  
 	JTAC.target.currentLasedTarget = vars.currentLasedTarget
 	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
 		JTAC.target.irSpot = Spot.createInfraRed(vars.jtac, nil, vars.GroupPosition)       
@@ -965,7 +966,7 @@ function JTAC.IR.createInfraRedOnMark(vars)
 	local lat, long, alt = coord.LOtoLL(vars.GroupPosition)
 	local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
 	local MGRS = coord.LLtoMGRS(coord.LOtoLL(vars.GroupPosition))
-    JTAC.MESSAGES.setMessageDelayed("Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false)
+    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false)
     if vars.Type ~= "Ground " then
     timer.scheduleFunction(JTAC.targetIRUpdatePos, true, timer.getTime() + 1)
     end
@@ -988,14 +989,14 @@ function JTAC.LASER.createLaserOnMark(vars)
     if vars.Type == nil then
 		vars.Type = "Ground "
 	end
-	JTAC.MESSAGES.setMessageDelayed(JTAC.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with Laser code: ".. JTAC.target.laserCode ..", sending coordinates... ", 7, 1, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with Laser code: ".. JTAC.target.laserCode ..", sending coordinates... ", 7, 1, true)
 	JTAC.target.currentLasedTarget = "STOP"
 	if JTAC.target.laserSpot ~= nil then
 		JTAC.target.laserSpot:destroy()
 		JTAC.target.laserSpot = nil
 	end
-	JTAC.MESSAGES.setMessageDelayed("UZI 1: Roger, painting your target now.... Laser is now on. Code: " .. JTAC.target.laserCode, 30, 8, true)
-	JTAC.MESSAGES.setMessageDelayed("INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"UZI 1: Roger, painting your target now.... Laser is now on. Code: " .. JTAC.target.laserCode, 30, 8, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false)
 	JTAC.target.currentLasedTarget = vars.currentLasedTarget
 	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
 		JTAC.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition,JTAC.target.laserCode)
@@ -1005,7 +1006,7 @@ function JTAC.LASER.createLaserOnMark(vars)
 	local lat, long, alt = coord.LOtoLL(vars.GroupPosition)
 	local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
 	local MGRS = coord.LLtoMGRS(coord.LOtoLL(vars.GroupPosition))
-    JTAC.MESSAGES.setMessageDelayed("Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false)
+    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false)
     if vars.Type ~= "Ground " then
     timer.scheduleFunction(JTAC.targetLaserUpdatePos, true, timer.getTime() + 1)
     end
@@ -1014,20 +1015,20 @@ end;
 
 function JTAC.LASER.stopLaser()
 	JTAC.target.currentLasedTarget = "STOP"
-	JTAC.MESSAGES.setMessageDelayed(JTAC.player .." : Terminate lasing.", 5, 1, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : Terminate lasing.", 5, 1, true)
 	if JTAC.target.laserSpot ~= nil then
-		JTAC.MESSAGES.setMessageDelayed("Wilco. Terminate lasing.... Laser is now off", 10, 8, true)
+		JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Wilco. Terminate lasing.... Laser is now off", 10, 8, true)
 		JTAC.target.laserSpot:destroy()
 		JTAC.target.laserSpot = nil
 	else
-		JTAC.MESSAGES.setMessageDelayed("Negative. Currently not lasing a target", 10, 8, true)
+		JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Negative. Currently not lasing a target", 10, 8, true)
 	end
 end;
 
 function JTAC.BILLUM.illuminationBombOnMark(position)
     timer.scheduleFunction(JTAC.BILLUM.illuminationBombOnMarkDelay, position, timer.getTime() + 15)
-    JTAC.MESSAGES.setMessageDelayed("PLAYER: Requesting current target illumination. ", 7, 1, true)
-	JTAC.MESSAGES.setMessageDelayed(" Roger, painting your target now.... Illumination Bomb on its way. " , 30, 8, true)
+    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Requesting current target illumination. ", 7, 1, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Roger, painting your target now.... Illumination Bomb on its way. " , 30, 8, true)
 end;
 
 function JTAC.BILLUM.triggerIllumBomb(mark)
@@ -1055,16 +1056,16 @@ end;
 
 function JTAC.SMOKE.smokeOnMark(position)
     timer.scheduleFunction(JTAC.SMOKE.triggerSmokeRed, position, timer.getTime() + 15)
-    JTAC.MESSAGES.setMessageDelayed("PLAYER: Requesting smoke on selected target. ", 7, 1, true)
-	JTAC.MESSAGES.setMessageDelayed(" Roger, painting your target now with red smoke. ETA 15s " , 30, 8, true)
+    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Requesting smoke on selected target. ", 7, 1, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Roger, painting your target now with red smoke. ETA 15s " , 30, 8, true)
 end;
 
 function JTAC.SMOKE.smokeOnJtac(groundName)
     source = Group.getByName(groundName):getUnit(1)
     position = source:getPoint()
     timer.scheduleFunction(JTAC.SMOKE.triggerSmokeGreen, position, timer.getTime() + 15)
-    JTAC.MESSAGES.setMessageDelayed("PLAYER: Requesting smoke Jtac position. ", 7, 1, true)
-	JTAC.MESSAGES.setMessageDelayed(" Roger, Green smoke on Jtac position. ETA 15s " , 30, 8, true)
+    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Requesting smoke Jtac position. ", 7, 1, true)
+	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Roger, Green smoke on Jtac position. ETA 15s " , 30, 8, true)
 end;
 
 function JTAC.SMOKE.triggerSmokeRed(position)
@@ -1086,6 +1087,19 @@ end
 
 function JTAC.MESSAGES.showMessage(parameters)
 	trigger.action.outText(parameters.ptext, parameters.pduration, parameters.pclear)
+end
+
+function JTAC.MESSAGES.setMessageDelayedForGroup(groupID, text, duration, delaySec, clear)
+	if clear == nil or clear == false then
+        clear = false
+	else
+		clear = true
+    end
+	timer.scheduleFunction(JTAC.MESSAGES.showMessageForGroup, {groupID = groupID, ptext = text, pduration = duration, pclear = clear}, timer.getTime() + delaySec)
+end
+
+function JTAC.MESSAGES.showMessageForGroup(parameters)
+	trigger.action.outTextForGroup(parameters.groupID, parameters.ptext, parameters.pduration, parameters.pclear)
 end
 
 function JTAC.SCAN.searchTargets(pPoint, pRadius, pType)
@@ -1144,7 +1158,7 @@ function JTAC.TARGETMENU.menu(jtacname, markerPos, gpID)
 
     -- No targets
     if not FoundUnits or #FoundUnits == 0 then
-        JTAC.MESSAGES.setMessageDelayed("UZI 1: No Target found in the zone, Lase the mark?", 30, 8, true)
+        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"UZI 1: No Target found in the zone, Lase the mark?", 30, 8, true)
         return false
     end
 
