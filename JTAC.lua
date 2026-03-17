@@ -646,14 +646,14 @@ function JTAC.requestGround()
                         JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
                         JTAC.target.droneInFlight = true;
                     else
-                        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,("COMMAND: Negative, insufficient command tokens for ground request.", 10, 12, true)
+                        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, insufficient command tokens for ground request.", 10, 12, true)
                     end
 
                 elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
-                    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,("COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true)
+                    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true)
                 end
             else
-                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,("COMMAND: Negative, there is not support available.", 10, 12, true)
+                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, there is not support available.", 10, 12, true)
             end
         else
             JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"INFO: You need to create a map mark jtac XXXX for target in F10 map (where XXXX is the laser code)", 10, 12, true)
