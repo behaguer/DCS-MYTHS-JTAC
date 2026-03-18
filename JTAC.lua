@@ -1,75 +1,44 @@
 JTAC = {};
 
-local eventJtac = {};
+local EVENTJTAC = {};
 
 -- =====================================================================================
 -- CONFIG (Editable Section)
 -- =====================================================================================
 
-JTAC = {
+-- Add configuration properties to existing JTAC table (don't overwrite)
+JTAC.debug = true             -- enable debug messages in DCS log and on screen
+JTAC.production_mode = false  -- when true, disables all debug messages even if debug is true
 
-    debug = true,             -- enable debug messages in DCS log and on screen
-    production_mode = false,  -- when true, disables all debug messages even if debug is true
+-- Options
+JTAC.groupPrefix = false        -- restrict F10 menu to group with specific prefix
+JTAC.Prefix = "Only"            -- choose group prefix
+JTAC.searchRadius = 5000        -- define radius for scanning zone (meters)
+JTAC.dfaultLaserCode = "1688"   -- Default laser code (not used in multi-player mode)
+JTAC.missionLimit = 5           -- Limit number of active JTAC missions per player (set to 1 for realism, can be increased for more casual play)
 
-    -- Options
-    groupPrefix = false,        -- restrict F10 menu to group with specific prefix
-    Prefix = "Only",           -- choose group prefix
-    searchRadius = 5000,       -- define radius for scanning zone (meters)
-    dfaultLaserCode = "1688",  -- Default laser code
-    targetPriority = "None",   -- Target priority: "Air Defence", "Armour", "Artillery", "Infantry", "None"
+-- List all unit you want to exclude from scanning you need to found the Type of the unit (e.g. "Barrier B" which is ["shape_name"] = "M92_BarrierB",["type"] = "Barrier B",
+-- sometime the type in mission editor is not real type like in ME : ORCA type is: Orca Whale but in mission (file inside the miz file) type - Orca
+-- you can also found the type in the traget list it ithe first name you see "target type: target name" in the list
 
-    -- System state
-    model = nil,
-    support = true,
-    groupAuth = false,
-    player = nil,
-    playerGroupID = nil,
-    playerGroupName = nil,
-    playerUnitName = nil,
-    playerUnit = nil,
-    playerPos = nil,
+-- Target filtering
+JTAC.exclude_Targets = {
+    {typeName = "Barrier B"}
+}
 
-    -- Target management
-    target = {
-        availability = 100,         -- chance of lase support available in the mission. 0 = no available at all; 1 - 99 = % chances availability; 100% = always available
-        waitTime = 30,              -- time in seconds between request a lase support and the lase support became available to use
-        laserPos = nil,
-        laserCode = nil,
-        laserSpot = nil,
-        irPos = nil,
-        irSpot = nil,
-        billum = nil,
-        droneName = "",
-        groundName = "",
-        droneInFlight = false,
-        droneInZone = false,
-        isLaseAvailable = false,
-        currentLasedTarget = nil
-    },
+JTAC.exclude_TargetNames = {
+    "Static",   -- excludes "Static_AAA", "Static_123", etc
+    "Hidden_"
+}
 
-    -- List all unit you want to exclude from scanning you need to found the Type of the unit (e.g. "Barrier B" which is ["shape_name"] = "M92_BarrierB",["type"] = "Barrier B",
-    -- sometime the type in mission editor is not real type like in ME : ORCA type is: Orca Whale but in mission (file inside the miz file) type - Orca
-    -- you can also found the type in the traget list it ithe first name you see "target type: target name" in the list
-
-    -- Target filtering
-    exclude_Targets = {
-        {typeName = "Barrier B"}
-    },
-
-    exclude_TargetNames = {
-        "Static",   -- excludes "Static_AAA", "Static_123", etc
-        "Hidden_"
-    },
-
-    IR = {},
-    LASER = {},
-    BILLUM = {},
-    SMOKE = {},
-    MESSAGES = {},
-    SCAN = {},
-    TARGETMENU = { menuHandles = {}};
-
-};
+-- Initialize module tables
+JTAC.IR = {}
+JTAC.LASER = {}
+JTAC.BILLUM = {}
+JTAC.SMOKE = {}
+JTAC.MESSAGES = {}
+JTAC.SCAN = {}
+JTAC.TARGETMENU = {}
 
 -- =====================================================================================
 -- DEBUG FUNCTIONS
@@ -84,31 +53,205 @@ local function debugMsg(message, force)
 end
 
 -- =====================================================================================
--- FUNCTIONS INITIALIZATION
+-- MULTI-PLAYER STATE MANAGEMENT
 -- =====================================================================================
 
-function eventJtac:onEvent(event)
+-- Active JTAC missions per player
+JTAC.ActiveMissions = {}
+
+-- Used laser codes to ensure uniqueness
+JTAC.UsedLaserCodes = {}
+
+-- Used JTAC call signs to ensure uniqueness across active missions
+JTAC.UsedJTACCodes = {}
+
+-- Phonetic alphabet for call signs
+JTAC.PhoneticAlphabet = {
+    "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", 
+    "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", 
+    "quebec", "romeo", "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu"
+}
+
+-- Generate unique laser code for new missions (1111-1788 range, prefer 1688)
+function JTAC.generateUniqueLaserCode()
+    -- Try preferred code first
+    if not JTAC.UsedLaserCodes["1688"] then
+        JTAC.UsedLaserCodes["1688"] = true
+        return "1688"
+    end
+    
+    -- Try other codes in range 1111-1788
+    for code = 1111, 1788 do
+        local codeStr = tostring(code)
+        if not JTAC.UsedLaserCodes[codeStr] then
+            JTAC.UsedLaserCodes[codeStr] = true
+            return codeStr
+        end
+    end
+    
+    -- Fallback if we somehow run out of codes in range
+    local rndCode = tostring(math.random(1111, 1788))
+    JTAC.UsedLaserCodes[rndCode] = true
+    return rndCode
+end
+
+-- Generate unique JTAC call sign with phonetic and laser code
+function JTAC.generateJTACCallSign()
+    local laserCode = JTAC.generateUniqueLaserCode()
+    
+    -- Find available phonetic
+    local availablePhonetics = {}
+    for _, phonetic in ipairs(JTAC.PhoneticAlphabet) do
+        local callSign = "jt-" .. phonetic .. "-" .. laserCode
+        if not JTAC.UsedJTACCodes[callSign] then
+            table.insert(availablePhonetics, phonetic)
+        end
+    end
+    
+    if #availablePhonetics == 0 then
+        -- Fallback to random phonetic if all are taken (very unlikely)
+        local randomPhonetic = JTAC.PhoneticAlphabet[math.random(1, #JTAC.PhoneticAlphabet)]
+        local callSign = "jt-" .. randomPhonetic .. "-" .. laserCode
+        JTAC.UsedJTACCodes[callSign] = true
+        return callSign, laserCode
+    end
+    
+    -- Select random available phonetic
+    local selectedPhonetic = availablePhonetics[math.random(1, #availablePhonetics)]
+    local callSign = "jt-" .. selectedPhonetic .. "-" .. laserCode
+    JTAC.UsedJTACCodes[callSign] = true
+    
+    return callSign, laserCode
+end
+
+-- Release laser code and call sign when mission ends
+function JTAC.releaseLaserCode(laserCode)
+    if laserCode and JTAC.UsedLaserCodes[laserCode] then
+        JTAC.UsedLaserCodes[laserCode] = nil
+    end
+end
+
+-- Release JTAC call sign when mission ends
+function JTAC.releaseJTACCallSign(callSign)
+    if callSign and JTAC.UsedJTACCodes[callSign] then
+        JTAC.UsedJTACCodes[callSign] = nil
+    end
+end
+
+-- Get or create mission state for a player
+function JTAC.getPlayerMission(playerName, playerGroupID)
+    if not JTAC.ActiveMissions[playerName] then
+        -- Create new mission state for this player (without assigning codes yet)
+        JTAC.ActiveMissions[playerName] = {
+            -- Player info
+            player = playerName,
+            playerGroupID = playerGroupID,
+            playerGroupName = nil,
+            playerUnitName = nil,
+            playerUnit = nil,
+            playerPos = nil,
+            model = nil,
+            groupAuth = false,
+            
+            -- Mission state
+            support = true,
+            targetPriority = "None",
+            
+            -- Target management
+            target = {
+                availability = 100,
+                waitTime = 30,
+                laserPos = nil,
+                laserCode = nil,
+                laserSpot = nil,
+                irPos = nil,
+                irSpot = nil,
+                billum = nil,
+                droneName = "",
+                groundName = "",
+                droneInFlight = false,
+                droneInZone = false,
+                isLaseAvailable = false,
+                currentLasedTarget = nil
+            },
+            
+            -- JTAC call sign management
+            jtacCallSign = nil,
+            awaitingMarker = false,
+            
+            -- UI Management
+            menuHandles = {}
+        }
+        
+        debugMsg("Created new JTAC mission for player: " .. playerName)
+        
+        -- Update availability for all missions after creating new mission
+        JTAC.setAvailability()
+    end
+    
+    return JTAC.ActiveMissions[playerName]
+end
+
+-- Clean up mission when player disconnects
+function JTAC.cleanupPlayerMission(playerName)
+    local mission = JTAC.ActiveMissions[playerName]
+    if mission then
+        -- Clean up any active assets
+        if mission.target.droneName ~= "" then
+            JTAC.dismissPackageForPlayer(mission, "DRONE")
+        end
+        if mission.target.groundName ~= "" then
+            JTAC.dismissPackageForPlayer(mission, "GROUND")
+        end
+        
+        -- Release laser code and call sign
+        JTAC.releaseLaserCode(mission.target.laserCode)
+        JTAC.releaseJTACCallSign(mission.jtacCallSign)
+        
+        -- Remove from active missions
+        JTAC.ActiveMissions[playerName] = nil
+        
+        -- Update availability for all missions after cleanup
+        JTAC.setAvailability()
+        
+        debugMsg("Cleaned up JTAC mission for player: " .. playerName)
+    end
+end
+
+-- =====================================================================================
+-- JTAC EVENTS MANAGER
+-- =====================================================================================
+
+function EVENTJTAC:onEvent(event)
 
     if (world.event.S_EVENT_BIRTH == event.id) and event.initiator then
         if event.initiator and event.initiator.getPlayerName then
             local playerName = event.initiator:getPlayerName()
             if playerName and playerName ~= "" then
-		        JTAC.player = playerName               -- player name
-		        JTAC.model = event.initiator:getTypeName()                  -- aircraft model
-                JTAC.playerGroupID = event.initiator:getGroup():getID()              -- group ID 
-                JTAC.playerGroupName = event.initiator:getGroup():getName()       -- group Name
-                JTAC.playerUnitName = event.initiator:getName()             -- Pilote Name in DCS
-                JTAC.playerUnit = event.initiator                           -- Unit table
-                JTAC.playerPos = event.initiator:getPoint()            -- Unit position
+                local groupID = event.initiator:getGroup():getID()
+                local groupName = event.initiator:getGroup():getName()
+                local unitName = event.initiator:getName()
+                
+                -- Get or create mission state for this player
+                local mission = JTAC.getPlayerMission(playerName, groupID)
+                
+                -- Update player info in their mission
+                mission.player = playerName
+                mission.model = event.initiator:getTypeName()
+                mission.playerGroupID = groupID
+                mission.playerGroupName = groupName
+                mission.playerUnitName = unitName
+                mission.playerUnit = event.initiator
+                mission.playerPos = event.initiator:getPoint()
 
-		        theatre = env.mission.theatre
+                local theatre = env.mission.theatre
 																				   
-                if JTAC.groupPrefix == true and string.sub(JTAC.playerGroupName,1,4) == JTAC.Prefix  then
-                    JTAC.setMenu(JTAC.playerGroupID)
-                    JTAC.groupAuth = true
+                if JTAC.groupPrefix == true and string.sub(groupName,1,4) == JTAC.Prefix then
+                    JTAC.setMenuForPlayer(mission)
+                    mission.groupAuth = true
                 elseif JTAC.groupPrefix == false then
-                    JTAC.setMenu(JTAC.playerGroupID)
-                    JTAC.groupAuth = true
+                    JTAC.setMenuForPlayer(mission)
+                    mission.groupAuth = true
                 end
             end
         end    
@@ -118,13 +261,16 @@ function eventJtac:onEvent(event)
         if event.initiator and event.initiator.getPlayerName then
             local playerName = event.initiator:getPlayerName()
             if playerName and playerName ~= "" then
-                if JTAC.support == false then
-                    if JTAC.target.droneName ~= "" then
-                        JTAC.dismissPackage("DRONE")
-                    elseif JTAC.target.groundName ~= "" then
-                        JTAC.dismissPackage("GROUND")
+                local mission = JTAC.ActiveMissions[playerName]
+                if mission and mission.support == false then
+                    if mission.target.droneName ~= "" then
+                        JTAC.dismissPackageForPlayer(mission, "DRONE")
+                    elseif mission.target.groundName ~= "" then
+                        JTAC.dismissPackageForPlayer(mission, "GROUND")
                     end
                 end
+                -- Clean up player mission completely
+                if playerName then JTAC.cleanupPlayerMission(playerName) end
             end
         end
 	end
@@ -133,13 +279,16 @@ function eventJtac:onEvent(event)
         if event.initiator and event.initiator.getPlayerName then
             local playerName = event.initiator:getPlayerName()
             if playerName and playerName ~= "" then
-                if JTAC.support == false then
-                    if JTAC.target.droneName ~= "" then
-                        JTAC.dismissPackage("DRONE")
-                    elseif JTAC.target.groundName ~= "" then
-                        JTAC.dismissPackage("GROUND")
+                local mission = JTAC.ActiveMissions[playerName]
+                if mission and mission.support == false then
+                    if mission.target.droneName ~= "" then
+                        JTAC.dismissPackageForPlayer(mission, "DRONE")
+                    elseif mission.target.groundName ~= "" then
+                        JTAC.dismissPackageForPlayer(mission, "GROUND")
                     end
                 end
+                -- Clean up player mission
+                if playerName then JTAC.cleanupPlayerMission(playerName) end
             end
         end
 	end
@@ -148,50 +297,139 @@ function eventJtac:onEvent(event)
         if event.initiator and event.initiator.getPlayerName then
             local playerName = event.initiator:getPlayerName()
             if playerName and playerName ~= "" then
-                if JTAC.support == false then
-                    if JTAC.target.droneName ~= "" then
-                        JTAC.dismissPackage("DRONE")
-                    elseif JTAC.target.groundName ~= "" then
-                        JTAC.dismissPackage("GROUND")
+                local mission = JTAC.ActiveMissions[playerName]
+                if mission and mission.support == false then
+                    if mission.target.droneName ~= "" then
+                        JTAC.dismissPackageForPlayer(mission, "DRONE")
+                    elseif mission.target.groundName ~= "" then
+                        JTAC.dismissPackageForPlayer(mission, "GROUND")
                     end
                 end
+                -- Clean up player mission
+                if playerName then JTAC.cleanupPlayerMission(playerName) end
             end
         end
 	end
 
-
 	if (world.event.S_EVENT_MARK_CHANGE == event.id) then
-        JTAC.markerIDx = event.idx
-       -- trigger.action.outText(" ID Marker : " .. JTAC.markerIDx , 10, false)
-		if (string.match(event.text, "jtac ") ~= nil) then
-			if coalition.getPlayers(coalition.side.RED)[1] ~= nil or coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
-				if JTAC.target.laserSpot ~= nil then
-					JTAC.target.laserSpot:destroy()
-					JTAC.target.laserSpot = nil;
-				end
+        -- NEW: Handle JTAC call sign marker placement
+        local markerText = event.text
+        
+        -- Look for JTAC call sign format: jt-phonetic-code
+        if (string.match(markerText, "^jt%-[a-z]+%-[0-9]+$")) then
+            -- Find the mission waiting for this specific call sign
+            local targetPlayerName = nil
+            local targetMission = nil
+            
+            for playerName, mission in pairs(JTAC.ActiveMissions) do
+                if mission.awaitingMarker and mission.jtacCallSign == markerText then
+                    targetPlayerName = playerName
+                    targetMission = mission
+                    break
+                end
+            end
+            
+            if targetMission then
+                if coalition.getPlayers(coalition.side.RED)[1] ~= nil or coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
+                    -- Clean up any existing laser/IR spots
+                    if targetMission.target.laserSpot ~= nil then
+                        targetMission.target.laserSpot:destroy()
+                        targetMission.target.laserSpot = nil;
+                    end
 
-                if JTAC.target.irSpot ~= nil then
-					JTAC.target.irSpot:destroy()
-					JTAC.target.irSpot = nil;
-				end
+                    if targetMission.target.irSpot ~= nil then
+                        targetMission.target.irSpot:destroy()
+                        targetMission.target.irSpot = nil;
+                    end
 
-				local index1 = string.find(event.text, "jtac ", 1)
-
-				JTAC.target.laserCode = JTAC.trim(string.sub(event.text, index1 + 5, string.len(event.text)))
-				JTAC.target.laserPos = event.pos
-                JTAC.target.irPos = event.pos
-                JTAC.target.scanPos = event.pos
-				if JTAC.target.laserPos ~= nil and JTAC.target.laserCode ~= nil and JTAC.target.laserCode ~= "" and JTAC.isInteger(JTAC.target.laserCode) then
-					debugMsg("You can request drone to IR mark or lase targets now. Code: " .. JTAC.target.laserCode)
-				else
-					debugMsg("Target for laser not created. Wrong mark format.")
-				end
-			else
-				debugMsg("There is no player in the mission. Can't request support")
-			end
-		end
+                    -- Set mission parameters
+                    targetMission.target.laserPos = event.pos
+                    targetMission.target.irPos = event.pos
+                    targetMission.target.scanPos = event.pos
+                    targetMission.awaitingMarker = false
+                    
+                    -- Refresh menu to show drone/ground options
+                    JTAC.setMenuForPlayer(targetMission)
+                    
+                    -- Update availability after JTAC position is set
+                    JTAC.setAvailability()
+                    
+                    JTAC.MESSAGES.setMsg(
+                        targetPlayerName .. ": JTAC position confirmed. You can now request drone or ground support. Laser code: " .. targetMission.target.laserCode, 
+                        12, 2, true, targetMission.playerGroupID)
+                    
+                    debugMsg("JTAC marker placed by " .. targetPlayerName .. " with call sign: " .. markerText)
+                else
+                    JTAC.MESSAGES.setMsg(
+                        "There are no players in the mission. Can't request support", 10, 2, true, targetMission.playerGroupID)
+                end
+            else
+                -- No mission found waiting for this call sign
+                debugMsg("Unknown JTAC call sign marker placed: " .. markerText)
+            end
+        end
     end
-end;
+end
+
+-- =====================================================================================
+-- JTAC REQUEST FUNCTIONS  
+-- =====================================================================================
+
+-- Request JTAC assignment - generates call sign and waits for marker
+function JTAC.requestJTACAssignment(mission)
+    if mission.awaitingMarker then
+        JTAC.MESSAGES.setMsg("JTAC request already pending. Place marker: " .. mission.jtacCallSign, 10, 2, true, mission.playerGroupID)
+        return
+    end
+    
+    if mission.target.laserCode then
+        JTAC.MESSAGES.setMsg("JTAC already assigned with code: " .. mission.target.laserCode, 10, 2, true, mission.playerGroupID)
+        return
+    end
+    
+    -- Generate unique JTAC call sign and laser code
+    local callSign, laserCode = JTAC.generateJTACCallSign()
+    
+    mission.jtacCallSign = callSign
+    mission.target.laserCode = laserCode
+    mission.awaitingMarker = true
+    
+    -- Refresh menu to show reminder and cancel options
+    JTAC.setMenuForPlayer(mission)
+    
+    JTAC.MESSAGES.setMsg(
+        "COMMAND: JTAC assignment ready. Place map marker with text: " .. callSign, 15, 2, true, mission.playerGroupID)
+    JTAC.MESSAGES.setMsg(
+        "Your laser code will be: " .. laserCode, 10, 2, false, mission.playerGroupID)
+    
+    debugMsg("Generated JTAC assignment for " .. mission.player .. ": " .. callSign .. " (Code: " .. laserCode .. ")")
+end
+
+-- Cancel JTAC request if player changes mind
+function JTAC.cancelJTACRequest(mission)
+    if not mission.awaitingMarker then
+        JTAC.MESSAGES.setMsg("No pending JTAC request to cancel.", 10, 2, true, mission.playerGroupID)
+        return
+    end
+    
+    -- Release the reserved codes
+    JTAC.releaseLaserCode(mission.target.laserCode)
+    JTAC.releaseJTACCallSign(mission.jtacCallSign)
+    
+    mission.jtacCallSign = nil
+    mission.target.laserCode = nil
+    mission.awaitingMarker = false
+    
+    -- Refresh menu to show initial state
+    JTAC.setMenuForPlayer(mission)
+    
+    JTAC.MESSAGES.setMsg("JTAC request cancelled.", 10, 2, true, mission.playerGroupID)
+    debugMsg("Cancelled JTAC request for player: " .. mission.player)
+end
+
+-- =====================================================================================
+-- JTAC FUNCTIONS
+-- =====================================================================================
 
 function JTAC.isExcludedTarget(sType)
 	for i, target_ in ipairs(JTAC.exclude_Targets) do
@@ -211,65 +449,72 @@ function JTAC.isExcludedTargetName(TGT)
     return false
 end
 
+function JTAC.requestDismissPackageForPlayer(mission, groupType)
+    JTAC.MESSAGES.setMsg(mission.player .." : You can RTB. Thank you for the support.", 10, 2, true, mission.playerGroupID)
+    timer.scheduleFunction(JTAC.dismissPackageForPlayer, {mission = mission, groupType = groupType}, timer.getTime() + 30)
+    if groupType == "DRONE" and mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) and Group.getByName(mission.target.droneName):getUnit(1) ~= nil then
+        JTAC.MESSAGES.setMessageDelayed("UZI 1: Mission over RTB.", 10, 7, true)
+    elseif groupType == "GROUND" and mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) and Group.getByName(mission.target.groundName):getUnit(1) ~= nil then
+        JTAC.MESSAGES.setMessageDelayed("Axeman 1: Mission over RTB.", 10, 10, true)
+    end
+end
+
+function JTAC.dismissPackageForPlayer(params)
+    local mission = params.mission
+    local groupType = params.groupType or "UNKNOWN"
+    
+    JTAC.MESSAGES.setMessageDelayed(groupType .. " package has left the Zone.", 15, 2, true)
+
+    if groupType == "DRONE" and mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) and Group.getByName(mission.target.droneName):getUnit(1) ~= nil then
+        JTAC.destroyGroup(mission.target.droneName)
+        JTAC.removeMenuForPlayer(mission)
+        JTAC.setMenuForPlayer(mission)
+        mission.target.laserPos = nil;
+        mission.target.irPos = nil;
+        mission.target.laserSpot = nil;
+        mission.target.irSpot = nil;
+        mission.target.droneName = "";
+        mission.target.droneInFlight = false;
+        mission.target.droneInZone = false;
+        mission.target.isLaseAvailable = false;
+        mission.target.currentLasedTarget = "STOP";
+        mission.support = true;
+
+    elseif groupType == "GROUND" and mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) and Group.getByName(mission.target.groundName):getUnit(1) ~= nil then
+        JTAC.destroyGroup(mission.target.groundName)
+        JTAC.removeMenuForPlayer(mission)
+        JTAC.setMenuForPlayer(mission)
+        mission.target.laserPos = nil;
+        mission.target.irPos = nil;
+        mission.target.laserSpot = nil;
+        mission.target.irSpot = nil;
+        mission.target.groundName = "";
+        mission.target.droneInFlight = false;
+        mission.target.droneInZone = false;
+        mission.target.isLaseAvailable = false;
+        mission.target.currentLasedTarget = "STOP";
+        mission.support = true;
+        
+        -- Update availability for all missions after dismissing JTAC
+        JTAC.setAvailability()
+    end
+end;
+
+-- Legacy function for backward compatibility
 function JTAC.requestDismissPackage(groupType)
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : You can RTB. Thank you for the support.", 10, 2, true)
-	timer.scheduleFunction(JTAC.dismissPackage,  groupType, timer.getTime() + 30)
-	if groupType == "DRONE" and Group.getByName(JTAC.target.droneName):getUnit(1) ~= nil then
-		JTAC.MESSAGES.setMessageDelayed("UZI 1: Mission over RTB.", 10, 7, true)
-	elseif groupType == "GROUND" and Group.getByName(JTAC.target.groundName):getUnit(1) ~= nil then
-		JTAC.MESSAGES.setMessageDelayed("Axeman 1: Mission over RTB.", 10, 10, true)
-	end
+    -- Find the first active mission for backward compatibility
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.requestDismissPackageForPlayer(mission, groupType)
+        break
+    end
 end
 
 function JTAC.dismissPackage(groupType)
-	JTAC.MESSAGES.setMessageDelayed(groupType  .. " package has left the Zone.", 15, 2, true)
-
-	if groupType == "DRONE" and Group.getByName(JTAC.target.droneName):getUnit(1) ~= nil then
-		JTAC.destroyGroup(JTAC.target.droneName)
-		JTAC.removeMenu(JTAC.playerGroupID)
-		JTAC.setMenu(JTAC.playerGroupID)
-		JTAC.target.laserPos = nil;
-        JTAC.target.irPos = nil;
-		JTAC.target.laserCode = nil;
-		JTAC.target.laserSpot = nil;
-        JTAC.target.irSpot = nil;
-		JTAC.target.droneName = "";
-		JTAC.target.droneInFlight = false;
-		JTAC.target.droneInZone = false;
-		JTAC.target.isLaseAvailable = false;
-		JTAC.target.currentLasedTarget = "STOP";
-        JTAC.support = true;
-        JTAC.player =  nil;
-        JTAC.model =  nil;
-        JTAC.playerGroupID =  nil;
-        JTAC.playerGroupName =  nil;
-        JTAC.playerUnitName =  nil;
-        JTAC.playerUnit =  nil;
-        JTAC.playerPos =  nil;
-
-	elseif groupType == "GROUND" and Group.getByName(JTAC.target.groundName):getUnit(1) ~= nil then
-		JTAC.destroyGroup(JTAC.target.groundName)
-		JTAC.removeMenu(JTAC.playerGroupID)
-		JTAC.setMenu(JTAC.playerGroupID)
-		JTAC.target.laserPos = nil;
-        JTAC.target.irPos = nil;
-		JTAC.target.laserCode = nil;
-		JTAC.target.laserSpot = nil;
-        JTAC.target.irSpot = nil;
-		JTAC.target.groundName = "";
-		JTAC.target.droneInFlight = false;
-		JTAC.target.droneInZone = false;
-		JTAC.target.isLaseAvailable = false;
-		JTAC.target.currentLasedTarget = "STOP";
-        JTAC.support = true;
-        JTAC.player =  nil;
-        JTAC.model =  nil;
-        JTAC.playerGroupID =  nil;
-        JTAC.playerGroupName =  nil;
-        JTAC.playerUnitName =  nil;
-        JTAC.playerUnit =  nil;
-        JTAC.playerPos =  nil;
-	end
+    -- Find the first active mission for backward compatibility
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.dismissPackageForPlayer({mission = mission, groupType = groupType})
+        break
+    end
 end;
 
 function JTAC.trim(s)
@@ -299,23 +544,44 @@ function JTAC.getCoordinatesSTR(decLat, decLong, alt)
 end
 
 function JTAC.setAvailability()
-	local randomLase = math.random() * 100
-	if randomLase < JTAC.target.availability then
-		JTAC.isLaseAvailable = true
-	else
-		JTAC.isLaseAvailable = false
-	end
-
+    -- Count active JTAC missions (those with assets deployed)
+    local activeJtacCount = 0
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        -- Count missions that have drones or ground units deployed
+        if mission.support == false and (mission.target.droneName ~= "" or mission.target.groundName ~= "") then
+            activeJtacCount = activeJtacCount + 1
+        end
+    end
+    
+    -- Set availability for all missions based on mission limit
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        if activeJtacCount < JTAC.missionLimit then
+            mission.target.isLaseAvailable = true
+        else
+            mission.target.isLaseAvailable = false
+        end
+    end
+    
+    debugMsg("Active JTAC count: " .. activeJtacCount .. "/" .. JTAC.missionLimit .. " - Availability: " .. tostring(activeJtacCount < JTAC.missionLimit))
 end;
 
-function JTAC.setTargetPriority(priority)
-    JTAC.targetPriority = priority
-    debugMsg("Target Priority set to: " .. priority)
+function JTAC.setTargetPriorityForPlayer(mission, priority)
+    mission.targetPriority = priority
+    JTAC.MESSAGES.setMsg("Target Priority set to: " .. priority, 10, 2, true, mission.playerGroupID)
 
-    -- Refresh target menu if JTAC is active
-    if JTAC.support == false and (JTAC.target.droneName ~= "" or JTAC.target.groundName ~= "") then
-        debugMsg("Refreshing target menu with new priority...")
-        JTAC.NewMarkerScan()
+    -- Refresh target menu if JTAC is active for this player
+    if mission.support == false and (mission.target.droneName ~= "" or mission.target.groundName ~= "") then
+        debugMsg("Refreshing target menu with new priority for player: " .. mission.player)
+        JTAC.NewMarkerScanForPlayer(mission)
+    end
+end;
+
+-- Legacy function for backward compatibility
+function JTAC.setTargetPriority(priority)
+    -- Find the first active mission for backward compatibility
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.setTargetPriorityForPlayer(mission, priority)
+        break
     end
 end;
 
@@ -343,54 +609,81 @@ function JTAC.categorizeTarget(unit)
     end
 end;
 
-function JTAC.requestDrone()
-    if  JTAC.support == true then
-
-        if JTAC.target.laserPos ~= nil and JTAC.target.laserCode ~= nil then
-            JTAC.MESSAGES.setMessageDelayed(JTAC.player.. " : Requesting drone for painting target near following coordinates: ", 7, 1, true)
-            local lat, long, alt = coord.LOtoLL(JTAC.target.laserPos)
+function JTAC.requestDroneForPlayer(mission)
+    if not mission.target.laserCode then
+        JTAC.MESSAGES.setMsg("You need to request JTAC assignment first. Use 'Request JTAC Lase' option.", 10, 2, true, mission.playerGroupID)
+        return
+    end
+    
+    if mission.awaitingMarker then
+        JTAC.MESSAGES.setMsg("Place your JTAC marker first: " .. mission.jtacCallSign, 10, 2, true, mission.playerGroupID)
+        JTAC.MESSAGES.setMsg("Your laser code: " .. mission.target.laserCode, 8, 2, false, mission.playerGroupID)
+        return
+    end
+    
+    if mission.support == true then
+        if mission.target.laserPos ~= nil and mission.target.laserCode ~= nil then
+            JTAC.MESSAGES.setMessageDelayed(mission.player.. " : Requesting drone for painting target near following coordinates: ", 7, 1, true)
+            local lat, long, alt = coord.LOtoLL(mission.target.laserPos)
             local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
-            local MGRS = coord.LLtoMGRS(coord.LOtoLL(JTAC.target.laserPos))
+            local MGRS = coord.LLtoMGRS(coord.LOtoLL(mission.target.laserPos))
             JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 7, 1, false)
-            if JTAC.isLaseAvailable == true then
-                if (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == false) then
+            if mission.target.isLaseAvailable == true then
+                if (mission.target.droneInZone == false and mission.target.droneInFlight == false) then
                     -- Check if player has enough command tokens before spawning
-                    if JTAC.spendCMDPoints(JTAC.player, 20) then
-                        timer.scheduleFunction(JTAC.createDroneDelayed, nil, timer.getTime() + JTAC.target.waitTime)
+                    if JTAC.spendCMDPoints(mission.player, 20) then
+                        timer.scheduleFunction(JTAC.createDroneDelayedForPlayer, mission, timer.getTime() + mission.target.waitTime)
                         JTAC.MESSAGES.setMessageDelayed("COMMAND: Copied, sending Reaper drone to Zone", 10, 12, true)
-                        JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for drone " .. JTAC.target.waitTime .." secs", 10, 12, false)
+                        JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for drone " .. mission.target.waitTime .." secs", 10, 12, false)
+                        JTAC.MESSAGES.setMsg("Laser Code: " .. mission.target.laserCode, 10, 12, false, mission.playerGroupID)
                         JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
-                        JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
-                        JTAC.target.droneInFlight = true;
+                        JTAC.MESSAGES.setMessageDelayed("MGRS: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
+                        mission.target.droneInFlight = true;
 
                     else
-                        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, insufficient command tokens for drone request.", 10, 12, true)
+                        JTAC.MESSAGES.setMsg("COMMAND: Negative, insufficient command points for JTAC request, who is this guy?.", 10, 12, true, mission.playerGroupID)
                     end
 
-                elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
-                    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, MQ-9 Reaper is on its way yet.", 10, 12, true)
+                elseif (mission.target.droneInZone == false and mission.target.droneInFlight == true) then
+                    JTAC.MESSAGES.setMsg("COMMAND: Negative, MQ-9 Reaper is on its way yet.", 10, 12, true, mission.playerGroupID)
                 end
             else
-                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, there is not support available.", 10, 12, true)
+                JTAC.MESSAGES.setMsg("COMMAND: Negative, there is not support available.", 10, 12, true, mission.playerGroupID)
             end
         else
-            JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"You need to create a mark jtac XXXX for target in F10 map (where XXXX is the laser code)")
-
+            -- This shouldn't happen if logic is correct - mission has laserCode but no laserPos
+            JTAC.MESSAGES.setMsg("ERROR: Mission state inconsistent. Please restart JTAC assignment.", 10, 12, true, mission.playerGroupID)
+            debugMsg("ERROR: Player " .. mission.player .. " has laserCode but no laserPos - resetting mission")
+            -- Reset mission state
+            JTAC.releaseLaserCode(mission.target.laserCode)
+            JTAC.releaseJTACCallSign(mission.jtacCallSign)
+            mission.target.laserCode = nil
+            mission.jtacCallSign = nil
+            mission.awaitingMarker = false
+            JTAC.setMenuForPlayer(mission)
         end
     else
-        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Jtac unavalaible , Already in service", 10, 12, true)
-            if JTAC.target.droneName ~= "" then
-                debugMsg('Drone: Uzi 1 '..JTAC.target.droneName .. " unavalaible , Already in service")
-                JTAC.JD99 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Dismiss DRONE package', JTAC.N9, JTAC.requestDismissPackage, "DRONE")
-            else
-                return false
-            end
+        JTAC.MESSAGES.setMsg("Jtac unavalaible , Already in service", 10, 12, true, mission.playerGroupID)
+        if mission.target.droneName ~= "" then
+            debugMsg('Drone: Uzi 1 '..mission.target.droneName .. " unavalaible , Already in service")
+        else
+            return false
+        end
         return false
     end
 end;
 
-function JTAC.createDroneDelayed()
-    JTAC.target.droneName = "JtacDrone" .. math.random(9999,99999)
+-- Legacy function for backward compatibility
+function JTAC.requestDrone()
+    -- Find the first active mission for backward compatibility or get current player
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.requestDroneForPlayer(mission)
+        break
+    end
+end;
+
+function JTAC.createDroneDelayedForPlayer(mission)
+    mission.target.droneName = "JtacDrone" .. math.random(9999,99999)
 	local _country = country.id.CJTF_BLUE
 
 	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
@@ -508,8 +801,8 @@ function JTAC.createDroneDelayed()
                                             ["type"] = "Turning Point",
                                             ["ETA"] = 0,
                                             ["ETA_locked"] = true,
-                                            ["y"] = JTAC.target.laserPos.z + 1000, -- spawn coord JTAC.target.laserPos.z + 1000
-                                            ["x"] = JTAC.target.laserPos.x + 1000, -- spawn coord JTAC.target.laserPos.x + 1000
+                                            ["y"] = mission.target.laserPos.z + 1000, -- spawn coord
+                                            ["x"] = mission.target.laserPos.x + 1000, -- spawn coord
                                             ["name"] = "Initial Point",
                                             ["speed_locked"] = true,
                                             ["formation_template"] = "",
@@ -552,8 +845,8 @@ function JTAC.createDroneDelayed()
                                             ["type"] = "Turning Point",
                                             ["ETA"] = 96.011094947238,
                                             ["ETA_locked"] = false,
-                                            ["y"] = JTAC.target.laserPos.z, -- orbit spot coord JTAC.target.laserPos.z
-                                            ["x"] = JTAC.target.laserPos.x, -- orbit spot coord JTAC.target.laserPos.x
+                                            ["y"] = mission.target.laserPos.z, -- orbit spot coord
+                                            ["x"] = mission.target.laserPos.x, -- orbit spot coord
                                             ["name"] = "spot",
                                             ["speed_locked"] = true,
                                             ["formation_template"] = "",
@@ -575,9 +868,9 @@ function JTAC.createDroneDelayed()
                                         ["unitId"] = 1,
                                         ["psi"] = 0,
                                         ["onboard_num"] = "010",
-                                        ["y"] = JTAC.target.laserPos.z + 1000, -- spawn coord JTAC.target.laserPos.z + 1000
-                                        ["x"] = JTAC.target.laserPos.x + 1000,  -- spawn coord JTAC.target.laserPos.x + 1000,
-                                        ["name"] = JTAC.target.droneName, --JTAC.target.droneName
+                                        ["y"] = mission.target.laserPos.z + 1000, -- spawn coord
+                                        ["x"] = mission.target.laserPos.x + 1000,  -- spawn coord
+                                        ["name"] = mission.target.droneName,
                                         ["payload"] =
                                         {
                                             ["pylons"] =
@@ -598,81 +891,138 @@ function JTAC.createDroneDelayed()
                                         }, -- end of ["callsign"]
                                     }, -- end of [1]
                                 }, -- end of ["units"]
-                                ["y"] = JTAC.target.laserPos.z + 1000, -- 0
-                                ["x"] = JTAC.target.laserPos.x + 1000, -- 0
-                                ["name"] = JTAC.target.droneName, -- JTAC.target.droneName
+                                ["y"] = mission.target.laserPos.z + 1000,
+                                ["x"] = mission.target.laserPos.x + 1000,
+                                ["name"] = mission.target.droneName,
                                 ["communication"] = true,
                                 ["start_time"] = 0,
                                 ["frequency"] = 251,
                         }
 
 	coalition.addGroup(_country, Group.Category.AIRPLANE, _droneData)
-    jtacname = Group.getByName(JTAC.target.droneName):getUnit(1)
-    JTAC.TARGETMENU.menu(jtacname, JTAC.target.irPos, JTAC.playerGroupID)
+    local jtacname = Group.getByName(mission.target.droneName):getUnit(1)
+    JTAC.TARGETMENU.menuForPlayer(jtacname, mission.target.irPos, mission)
 	JTAC.MESSAGES.setMessageDelayed("UZI 1: Drone is in the Operation area. Ready to copy target. Over", 20, 2, true)
-	missionCommands.removeItemForGroup(JTAC.playerGroupID, JTAC.JD11)
-    missionCommands.removeItemForGroup(JTAC.playerGroupID, JTAC.JG11)
+	
+    -- Remove the request menus and add control menus
+    if mission.menuHandles.JD11 then missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.JD11) end
+    if mission.menuHandles.JG11 then missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.JG11) end
     
-    JTAC.JD13 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Lase my mark', JTAC.J1, JTAC.LASER.createLaserOnMark, {jtac = jtacname, GroupPosition = JTAC.target.laserPos, TGT = "Mark", currentLasedTarget = "STOP"})
-    JTAC.JD23 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'IR my mark', JTAC.J1, JTAC.IR.createInfraRedOnMark, {jtac = jtacname, GroupPosition = JTAC.target.irPos, TGT = "Mark", currentLasedTarget = "STOP"})
-    JTAC.JD14 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Terminate lasing', JTAC.J1, JTAC.LASER.stopLaser, nil)
-    JTAC.JD24 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Terminate IR lasing', JTAC.J1, JTAC.IR.stopIR, nil)
-    JTAC.N31 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Illumination Bomb', JTAC.J1, JTAC.BILLUM.illuminationBombOnMark, JTAC.target.irPos)
-    JTAC.N32 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Smoke my mark', JTAC.J1, JTAC.SMOKE.smokeOnMark, JTAC.target.irPos)
-    JTAC.JD98 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'ReScan', JTAC.J1, JTAC.NewMarkerScan, nil)
-    JTAC.JD99 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Dismiss DRONE package', JTAC.N9, JTAC.requestDismissPackage, "DRONE")
-	JTAC.target.droneInZone = true
-    JTAC.support = false
+    mission.menuHandles.JD13 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Lase my mark', mission.menuHandles.J1, 
+        function() JTAC.LASER.createLaserOnMarkForPlayer(mission, {jtac = jtacname, GroupPosition = mission.target.laserPos, TGT = "Mark", currentLasedTarget = "STOP"}) end)
+    
+    mission.menuHandles.JD23 = missionCommands.addCommandForGroup(mission.playerGroupID, 'IR my mark', mission.menuHandles.J1, 
+        function() JTAC.IR.createInfraRedOnMarkForPlayer(mission, {jtac = jtacname, GroupPosition = mission.target.irPos, TGT = "Mark", currentLasedTarget = "STOP"}) end)
+    
+    mission.menuHandles.JD14 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Terminate lasing', mission.menuHandles.J1, 
+        function() JTAC.LASER.stopLaserForPlayer(mission) end)
+    
+    mission.menuHandles.JD24 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Terminate IR lasing', mission.menuHandles.J1, 
+        function() JTAC.IR.stopIRForPlayer(mission) end)
+    
+    mission.menuHandles.N31 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Illumination Bomb', mission.menuHandles.J1, 
+        function() JTAC.BILLUM.illuminationBombOnMarkForPlayer(mission, mission.target.irPos) end)
+    
+    mission.menuHandles.N32 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Smoke my mark', mission.menuHandles.J1, 
+        function() JTAC.SMOKE.smokeOnMarkForPlayer(mission, mission.target.irPos) end)
+    
+    mission.menuHandles.JD98 = missionCommands.addCommandForGroup(mission.playerGroupID, 'ReScan', mission.menuHandles.J1, 
+        function() JTAC.NewMarkerScanForPlayer(mission) end)
+    
+    mission.menuHandles.JD99 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Dismiss DRONE package', mission.menuHandles.N9,
+        function() JTAC.requestDismissPackageForPlayer(mission, "DRONE") end)
+    
+	mission.target.droneInZone = true
+    mission.support = false
+    
+    -- Update availability for all missions after deploying new JTAC
+    JTAC.setAvailability()
 
 end;
 
-function JTAC.requestGround()
-    if  JTAC.support == true then
+-- Legacy function for backward compatibility
+function JTAC.createDroneDelayed()
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.createDroneDelayedForPlayer(mission)
+        break
+    end
+end;
 
-        if JTAC.target.laserPos ~= nil and JTAC.target.laserCode ~= nil then
-            JTAC.MESSAGES.setMessageDelayed(JTAC.player .. " : Requesting Ground for painting target near following coordinates: ", 7, 1, true)
-            local lat, long, alt = coord.LOtoLL(JTAC.target.laserPos)
+function JTAC.requestGroundForPlayer(mission)
+    if not mission.target.laserCode then
+        JTAC.MESSAGES.setMsg("You need to request JTAC assignment first. Use 'Request JTAC Lase' option.", 10, 2, true, mission.playerGroupID)
+        return
+    end
+    
+    if mission.awaitingMarker then
+        JTAC.MESSAGES.setMsg("Place your JTAC marker first: " .. mission.jtacCallSign, 10, 2, true, mission.playerGroupID)
+        JTAC.MESSAGES.setMsg("Your laser code: " .. mission.target.laserCode, 8, 2, false, mission.playerGroupID)
+        return
+    end
+    
+    if mission.support == true then
+
+        if mission.target.laserPos ~= nil and mission.target.laserCode ~= nil then
+            JTAC.MESSAGES.setMessageDelayed(mission.player .. " : Requesting Ground for painting target near following coordinates: ", 7, 1, true)
+            local lat, long, alt = coord.LOtoLL(mission.target.laserPos)
             local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
-            local MGRS = coord.LLtoMGRS(coord.LOtoLL(JTAC.target.laserPos))
+            local MGRS = coord.LLtoMGRS(coord.LOtoLL(mission.target.laserPos))
             JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 7, 1, false)
-            if JTAC.isLaseAvailable == true then
-                if (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == false) then
+            if mission.target.isLaseAvailable == true then
+                if (mission.target.droneInZone == false and mission.target.droneInFlight == false) then
                     -- Check if player has enough command tokens before spawning
-                    if JTAC.spendCMDPoints(JTAC.player, 10) then
-                        timer.scheduleFunction(JTAC.createGroundDelayed, nil, timer.getTime() + JTAC.target.waitTime)
+                    if JTAC.spendCMDPoints(mission.player, 10) then
+                        timer.scheduleFunction(JTAC.createGroundDelayedForPlayer, mission, timer.getTime() + mission.target.waitTime)
                         JTAC.MESSAGES.setMessageDelayed("COMMAND: Copied, sending Ground to Zone.", 10, 12, true)
-                        JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for Ground " .. JTAC.target.waitTime .." secs", 10, 12, false)
+                        JTAC.MESSAGES.setMessageDelayed("INFO: Total ETA for Ground " .. mission.target.waitTime .." secs", 10, 12, false)
+                        JTAC.MESSAGES.setMsg("Laser Code: " .. mission.target.laserCode, 10, 12, false, mission.playerGroupID)
                         JTAC.MESSAGES.setMessageDelayed(coordSTR.lat .. " " .. coordSTR.long .. " " .. coordSTR.alt .. "m", 60, 12, false)
                         JTAC.MESSAGES.setMessageDelayed("     Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. string.format("%05d", MGRS.Easting) .. ' ' .. string.format("%05d", MGRS.Northing), 60, 12, false)
-                        JTAC.target.droneInFlight = true;
+                        mission.target.droneInFlight = true;
                     else
-                        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, insufficient command tokens for ground request.", 10, 12, true)
+                        JTAC.MESSAGES.setMsg("COMMAND: Negative, insufficient command tokens for ground request.", 10, 12, true, mission.playerGroupID)
                     end
 
-                elseif (JTAC.target.droneInZone == false and JTAC.target.droneInFlight == true) then
-                    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true)
+                elseif (mission.target.droneInZone == false and mission.target.droneInFlight == true) then
+                    JTAC.MESSAGES.setMsg("COMMAND: Negative, Ground Units is on its way yet.", 10, 12, true, mission.playerGroupID)
                 end
             else
-                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"COMMAND: Negative, there is not support available.", 10, 12, true)
+                JTAC.MESSAGES.setMsg("COMMAND: Negative, there is currently no support available.", 10, 12, true, mission.playerGroupID)
             end
         else
-            JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"INFO: You need to create a map mark jtac XXXX for target in F10 map (where XXXX is the laser code)", 10, 12, true)
+            -- This shouldn't happen if logic is correct - mission has laserCode but no laserPos
+            JTAC.MESSAGES.setMsg("ERROR: Mission state inconsistent. Please restart JTAC assignment.", 10, 12, true, mission.playerGroupID)
+            debugMsg("ERROR: Player " .. mission.player .. " has laserCode but no laserPos - resetting mission")
+            -- Reset mission state
+            JTAC.releaseLaserCode(mission.target.laserCode)
+            JTAC.releaseJTACCallSign(mission.jtacCallSign)
+            mission.target.laserCode = nil
+            mission.jtacCallSign = nil
+            mission.awaitingMarker = false
+            JTAC.setMenuForPlayer(mission)
         end
     else
-        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Jtac unavalaible , Already in service", 10, 12, true)
-            if JTAC.target.groundName ~= "" then
-                JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,'Ground: Axeman 1 '..JTAC.target.groundName .. " unavalaible , Already in service", 10, 12, true)
-                JTAC.JD99 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Dismiss GROUND package', JTAC.N9, JTAC.requestDismissPackage, "GROUND")
-            else
-                return false
-            end
+        JTAC.MESSAGES.setMsg("Jtac unavalaible , Already in service", 10, 12, true, mission.playerGroupID)
+        if mission.target.groundName ~= "" then
+            JTAC.MESSAGES.setMsg('Ground: Axeman 1 '..mission.target.groundName .. " unavalaible , Already in service", 10, 12, true, mission.playerGroupID)
+        else
+            return false
+        end
         return false
     end
 end;
 
-function JTAC.createGroundDelayed()
-    JTAC.target.groundName = "JtacGround" .. math.random(9999,99999)
-   -- jtacgroup = JTAC.target.groundName
+-- Legacy function for backward compatibility
+function JTAC.requestGround()
+    -- Find the first active mission for backward compatibility
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.requestGroundForPlayer(mission)
+        break
+    end
+end;
+
+function JTAC.createGroundDelayedForPlayer(mission)
+    mission.target.groundName = "JtacGround" .. math.random(9999,99999)
 
     local _country = country.id.CJTF_BLUE
 
@@ -699,26 +1049,26 @@ function JTAC.createGroundDelayed()
                                         {
                                             [1] =
                                             {
-                                                ["y"] = JTAC.target.laserPos.z + 1000,
-                                                ["x"] = JTAC.target.laserPos.x + 1000,
+                                                ["y"] = mission.target.laserPos.z + 1000,
+                                                ["x"] = mission.target.laserPos.x + 1000,
                                             }, -- end of [1]
                                             [2] =
                                             {
-                                                ["y"] = JTAC.target.laserPos.z + 300,
-                                                ["x"] = JTAC.target.laserPos.x + 300,
+                                                ["y"] = mission.target.laserPos.z + 300,
+                                                ["x"] = mission.target.laserPos.x + 300,
                                             }, -- end of [2]
                                         }, -- end of [1]
                                         [2] =
                                         {
                                             [1] =
                                             {
-                                                ["y"] = JTAC.target.laserPos.z + 300,
-                                                ["x"] = JTAC.target.laserPos.x + 300,
+                                                ["y"] = mission.target.laserPos.z + 300,
+                                                ["x"] = mission.target.laserPos.x + 300,
                                             }, -- end of [1]
                                             [2] =
                                             {
-                                                ["y"] = JTAC.target.laserPos.z + 300,
-                                                ["x"] = JTAC.target.laserPos.x + 300,
+                                                ["y"] = mission.target.laserPos.z + 300,
+                                                ["x"] = mission.target.laserPos.x + 300,
                                             }, -- end of [2]
                                         }, -- end of [2]
                                     }, -- end of ["spans"]
@@ -731,8 +1081,8 @@ function JTAC.createGroundDelayed()
                                             ["ETA"] = 0,
                                             ["alt_type"] = "BARO",
                                             ["formation_template"] = "",
-                                            ["y"] = JTAC.target.laserPos.z + 1000,
-                                            ["x"] = JTAC.target.laserPos.x + 1000,
+                                            ["y"] = mission.target.laserPos.z + 1000,
+                                            ["x"] = mission.target.laserPos.x + 1000,
                                             ["name"] = "spawn",
                                             ["ETA_locked"] = true,
                                             ["speed"] = 0,
@@ -830,8 +1180,8 @@ function JTAC.createGroundDelayed()
                                             ["ETA"] = 278.24736729865,
                                             ["alt_type"] = "BARO",
                                             ["formation_template"] = "",
-                                            ["y"] = JTAC.target.laserPos.z + 300,
-                                            ["x"] = JTAC.target.laserPos.x + 300,
+                                            ["y"] = mission.target.laserPos.z + 300,
+                                            ["x"] = mission.target.laserPos.x + 300,
                                             ["name"] = "SPOT",
                                             ["ETA_locked"] = false,
                                             ["speed"] = 5.5555555555556,
@@ -860,175 +1210,245 @@ function JTAC.createGroundDelayed()
                                         ["coldAtStart"] = false,
                                         ["type"] = "M1045 HMMWV TOW",
                                         ["unitId"] = 1,
-                                        ["y"] = JTAC.target.laserPos.z + 1000,
-                                        ["x"] = JTAC.target.laserPos.x + 1000,
+                                        ["y"] = mission.target.laserPos.z + 1000,
+                                        ["x"] = mission.target.laserPos.x + 1000,
                                         ["name"] = "Axeman 1",
                                         ["heading"] = 0,
                                         ["playerCanDrive"] = true,
                                     }, -- end of [1]
                                 }, -- end of ["units"]
-                                ["y"] = JTAC.target.laserPos.z + 1000,
-                                ["x"] = JTAC.target.laserPos.x + 1000,
-                                ["name"] = JTAC.target.groundName,
+                                ["y"] = mission.target.laserPos.z + 1000,
+                                ["x"] = mission.target.laserPos.x + 1000,
+                                ["name"] = mission.target.groundName,
                                 ["start_time"] = 0,
                         }
 
 	coalition.addGroup(_country, Group.Category.GROUND, _GroundData)
 
-    jtacname = Group.getByName(JTAC.target.groundName):getUnit(1)
+    local jtacname = Group.getByName(mission.target.groundName):getUnit(1)
 
-    JTAC.TARGETMENU.menu(jtacname, JTAC.target.irPos, JTAC.playerGroupID)
+    JTAC.TARGETMENU.menuForPlayer(jtacname, mission.target.irPos, mission)
 	JTAC.MESSAGES.setMessageDelayed("AXEMAN 1: Ground is in the Operation area. Ready to copy target. Over", 20, 2, true)
-	missionCommands.removeItemForGroup(JTAC.playerGroupID, JTAC.JD11)
-    missionCommands.removeItemForGroup(JTAC.playerGroupID, JTAC.JG11)
+	
+    -- Remove the request menus and add control menus
+    if mission.menuHandles.JD11 then missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.JD11) end
+    if mission.menuHandles.JG11 then missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.JG11) end
 
-    JTAC.JD13 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Lase my mark', JTAC.J1, JTAC.LASER.createLaserOnMark, {jtac = jtacname, GroupPosition = JTAC.target.laserPos,Type = "Ground ", TGT = "Mark", currentLasedTarget = "STOP"})
-    JTAC.JD23 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'IR my mark', JTAC.J1, JTAC.IR.createInfraRedOnMark, {jtac = jtacname, GroupPosition = JTAC.target.irPos,Type = "Ground ", TGT = "Mark", currentLasedTarget = "STOP"})
-    JTAC.N31 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Illumination Bomb', JTAC.J1, JTAC.BILLUM.illuminationBombOnMark, JTAC.target.irPos)
-    JTAC.N32 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Smoke my mark', JTAC.J1, JTAC.SMOKE.smokeOnMark, JTAC.target.irPos)
-    JTAC.N33 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Smoke Ground Jtac', JTAC.J1, JTAC.SMOKE.smokeOnJtac, JTAC.target.groundName)
-    JTAC.JD14 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Terminate lasing', JTAC.J1, JTAC.LASER.stopLaser, nil)
-    JTAC.JD24 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Terminate IR lasing', JTAC.J1, JTAC.IR.stopIR, nil)
-    JTAC.JD98 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'ReScan', JTAC.J1, JTAC.NewMarkerScan, nil)
-    JTAC.JD99 = missionCommands.addCommandForGroup(JTAC.playerGroupID, 'Dismiss GROUND package', JTAC.N9, JTAC.requestDismissPackage, "GROUND")
-	JTAC.target.droneInZone = true
-    JTAC.support = false
+    mission.menuHandles.JD13 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Lase my mark', mission.menuHandles.J1, 
+        function() JTAC.LASER.createLaserOnMarkForPlayer(mission, {jtac = jtacname, GroupPosition = mission.target.laserPos, Type = "Ground ", TGT = "Mark", currentLasedTarget = "STOP"}) end)
+    
+    mission.menuHandles.JD23 = missionCommands.addCommandForGroup(mission.playerGroupID, 'IR my mark', mission.menuHandles.J1, 
+        function() JTAC.IR.createInfraRedOnMarkForPlayer(mission, {jtac = jtacname, GroupPosition = mission.target.irPos, Type = "Ground ", TGT = "Mark", currentLasedTarget = "STOP"}) end)
+    
+    mission.menuHandles.N31 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Illumination Bomb', mission.menuHandles.J1, 
+        function() JTAC.BILLUM.illuminationBombOnMarkForPlayer(mission, mission.target.irPos) end)
+    
+    mission.menuHandles.N32 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Smoke my mark', mission.menuHandles.J1, 
+        function() JTAC.SMOKE.smokeOnMarkForPlayer(mission, mission.target.irPos) end)
+    
+    mission.menuHandles.N33 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Smoke Ground Jtac', mission.menuHandles.J1, 
+        function() JTAC.SMOKE.smokeOnJtacForPlayer(mission, mission.target.groundName) end)
+    
+    mission.menuHandles.JD14 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Terminate lasing', mission.menuHandles.J1, 
+        function() JTAC.LASER.stopLaserForPlayer(mission) end)
+    
+    mission.menuHandles.JD24 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Terminate IR lasing', mission.menuHandles.J1, 
+        function() JTAC.IR.stopIRForPlayer(mission) end)
+    
+    mission.menuHandles.JD98 = missionCommands.addCommandForGroup(mission.playerGroupID, 'ReScan', mission.menuHandles.J1, 
+        function() JTAC.NewMarkerScanForPlayer(mission) end)
+    
+    mission.menuHandles.JD99 = missionCommands.addCommandForGroup(mission.playerGroupID, 'Dismiss GROUND package', mission.menuHandles.N9,
+        function() JTAC.requestDismissPackageForPlayer(mission, "GROUND") end)
+    
+	mission.target.droneInZone = true
+    mission.support = false
+    
+    -- Update availability for all missions after deploying new JTAC
+    JTAC.setAvailability()
 
 end;
 
-function JTAC.targetIRUpdatePos(condition,time) 
-        if condition == true and JTAC.target.currentLasedTarget ~= "STOP" then
-            local targetUnit = Unit.getByName(JTAC.target.currentLasedTarget)
-            if targetUnit and targetUnit:isExist() then
-                local targetCoord = targetUnit:getPoint()
-                if JTAC.target.irSpot ~= nil then
-                    JTAC.target.irSpot:destroy()
-                end
-                JTAC.target.irSpot = Spot.createInfraRed(jtacname, nil, targetCoord)
-                return time + 0.15
-            else
-                -- Target unit no longer exists, stop tracking
-                JTAC.target.currentLasedTarget = "STOP"
-                if JTAC.target.irSpot ~= nil then
-                    JTAC.target.irSpot:destroy()
-                    JTAC.target.irSpot = nil
-                end
-                return nil
-            end
-        else
-            return nil
-        end  
+-- Legacy function for backward compatibility
+function JTAC.createGroundDelayed()
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.createGroundDelayedForPlayer(mission)
+        break
+    end
 end;
 
-function JTAC.targetLaserUpdatePos(condition,time)
-    if condition == true and JTAC.target.currentLasedTarget ~= "STOP" then
-        local targetUnit = Unit.getByName(JTAC.target.currentLasedTarget)
-        if targetUnit and targetUnit:isExist() then
-            local targetCoord = targetUnit:getPoint()
-            if JTAC.target.laserSpot ~= nil then
-                JTAC.target.laserSpot:destroy()
-            end
-            JTAC.target.laserSpot = Spot.createLaser(jtacname, nil, targetCoord, JTAC.target.laserCode)
-            return time + 0.1
-        else
-            -- Target unit no longer exists, stop tracking
-            JTAC.target.currentLasedTarget = "STOP"
-            if JTAC.target.laserSpot ~= nil then
-                JTAC.target.laserSpot:destroy()
-                JTAC.target.laserSpot = nil
-            end
-            return nil
-        end
-    else
+-- =====================================================================================
+-- TARGETING FUNCTIONS
+-- =====================================================================================
+
+-- Player-specific target update functions
+function JTAC.targetIRUpdatePosForPlayer(params)
+    local mission = params.mission
+    local time = timer.getTime()
+    
+    -- Check if we should still be tracking
+    if not mission or not mission.target or mission.target.currentLasedTarget == "STOP" then
         return nil
-    end 
-end;
-
-function JTAC.IR.createInfraRedOnMark(vars)
-    if vars.Type == nil then
-		vars.Type = "Ground "
-	end
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with IR laser, sending coordinates... ", 7, 1, true)
-    JTAC.target.currentLasedTarget = "STOP"
-
-	if JTAC.target.irSpot ~= nil then
-		JTAC.target.irSpot:destroy()
-		JTAC.target.irSpot = nil
-	end
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"UZI 1: Roger, painting your target now.... IR Laser is now on. " , 30, 8, true)
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false)  
-	JTAC.target.currentLasedTarget = vars.currentLasedTarget
-	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
-		JTAC.target.irSpot = Spot.createInfraRed(vars.jtac, nil, vars.GroupPosition)       
-	elseif coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
-		JTAC.target.irSpot = Spot.createInfraRed(vars.jtac, nil, vars.GroupPosition)
-	end
-	local lat, long, alt = coord.LOtoLL(vars.GroupPosition)
-	local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
-	local MGRS = coord.LLtoMGRS(coord.LOtoLL(vars.GroupPosition))
-    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false)
-    if vars.Type ~= "Ground " then
-    timer.scheduleFunction(JTAC.targetIRUpdatePos, true, timer.getTime() + 1)
     end
-
-end;
-
-function JTAC.IR.stopIR()
-	JTAC.target.currentLasedTarget = "STOP"
-	JTAC.MESSAGES.setMessageDelayed("PLAYER: Terminate IR lasing.", 5, 1, true)
-	if JTAC.target.irSpot ~= nil then
-		JTAC.MESSAGES.setMessageDelayed(" Wilco. Terminate  IR lasing.... IR Laser is now off", 10, 8, true)
-		JTAC.target.irSpot:destroy()
-		JTAC.target.irSpot = nil
-	else
-		JTAC.MESSAGES.setMessageDelayed(" Negative. Currently not IR lasing a target", 10, 8, true)
-	end
-end;
-
-function JTAC.LASER.createLaserOnMark(vars)
-    if vars.Type == nil then
-		vars.Type = "Ground "
-	end
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with Laser code: ".. JTAC.target.laserCode ..", sending coordinates... ", 7, 1, true)
-	JTAC.target.currentLasedTarget = "STOP"
-	if JTAC.target.laserSpot ~= nil then
-		JTAC.target.laserSpot:destroy()
-		JTAC.target.laserSpot = nil
-	end
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"UZI 1: Roger, painting your target now.... Laser is now on. Code: " .. JTAC.target.laserCode, 30, 8, true)
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false)
-	JTAC.target.currentLasedTarget = vars.currentLasedTarget
-	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
-		JTAC.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition,JTAC.target.laserCode)
-	elseif coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
-		JTAC.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition,JTAC.target.laserCode)
-	end
-	local lat, long, alt = coord.LOtoLL(vars.GroupPosition)
-	local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
-	local MGRS = coord.LLtoMGRS(coord.LOtoLL(vars.GroupPosition))
-    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Grid: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false)
-    if vars.Type ~= "Ground " then
-    timer.scheduleFunction(JTAC.targetLaserUpdatePos, true, timer.getTime() + 1)
+    
+    local targetUnit = Unit.getByName(mission.target.currentLasedTarget)
+    if not targetUnit or not targetUnit:isExist() then
+        -- Check if unit was destroyed vs moved out of range
+        if not targetUnit then
+            -- Unit.getByName() returned nil - target was destroyed
+            JTAC.MESSAGES.setMsg("GOOD EFFECT! Target destroyed: " .. mission.target.currentLasedTarget, 10, 2, true, mission.playerGroupID)
+            debugMsg("Target destroyed: " .. mission.target.currentLasedTarget)
+            -- Refresh target menu to remove destroyed target
+            timer.scheduleFunction(function() 
+                if mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) then
+                    local jtacunit = Group.getByName(mission.target.droneName):getUnit(1)
+                    if jtacunit then JTAC.NewMarkerScanForPlayer(mission) end
+                elseif mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) then
+                    local jtacunit = Group.getByName(mission.target.groundName):getUnit(1)
+                    if jtacunit then JTAC.NewMarkerScanForPlayer(mission) end
+                end
+            end, nil, timer.getTime() + 1)
+        else
+            -- Unit exists but isExist() is false - moved out of range or inactive
+            debugMsg("Target unit no longer active (out of range): " .. mission.target.currentLasedTarget)
+        end
+        mission.target.currentLasedTarget = "STOP"
+        mission.target.lastIRPosition = nil
+        if mission.target.irSpot ~= nil then
+            mission.target.irSpot:destroy()
+            mission.target.irSpot = nil
+        end
+        return nil
     end
-
+    
+    local targetCoord = targetUnit:getPosition().p
+    
+    -- Check if target has moved significantly
+    local shouldUpdate = false
+    if not mission.target.lastIRPosition then
+        -- Store initial position but don't update IR (already created)
+        mission.target.lastIRPosition = {x = targetCoord.x, y = targetCoord.y, z = targetCoord.z}
+    else
+        -- Check distance moved
+        local dx = targetCoord.x - mission.target.lastIRPosition.x
+        local dz = targetCoord.z - mission.target.lastIRPosition.z
+        local distance = math.sqrt(dx*dx + dz*dz)
+        
+        if distance > 10 then  -- 10 meter threshold
+            shouldUpdate = true
+            mission.target.lastIRPosition = {x = targetCoord.x, y = targetCoord.y, z = targetCoord.z}
+        end
+    end
+    
+    -- Only update IR if target moved significantly
+    if shouldUpdate then
+        if mission.target.irSpot ~= nil then
+            mission.target.irSpot:destroy()
+        end
+        
+        local jtacunit = nil
+        if mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) then
+            jtacunit = Group.getByName(mission.target.droneName):getUnit(1)
+        elseif mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) then
+            jtacunit = Group.getByName(mission.target.groundName):getUnit(1)
+        end
+        if jtacunit then
+            mission.target.irSpot = Spot.createInfraRed(jtacunit, nil, targetCoord)
+        end
+    end
+    
+    return time + 1.0  -- Check every second
 end;
 
-function JTAC.LASER.stopLaser()
-	JTAC.target.currentLasedTarget = "STOP"
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,JTAC.player .." : Terminate lasing.", 5, 1, true)
-	if JTAC.target.laserSpot ~= nil then
-		JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Wilco. Terminate lasing.... Laser is now off", 10, 8, true)
-		JTAC.target.laserSpot:destroy()
-		JTAC.target.laserSpot = nil
-	else
-		JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"Negative. Currently not lasing a target", 10, 8, true)
-	end
+function JTAC.targetLaserUpdatePosForPlayer(params)
+    local mission = params.mission
+    local time = timer.getTime()
+    
+    -- Check if we should still be tracking
+    if not mission or not mission.target or mission.target.currentLasedTarget == "STOP" then
+        debugMsg("Laser tracking stopped for player: " .. (mission and mission.player or "unknown"))
+        return nil
+    end
+    
+    local targetUnit = Unit.getByName(mission.target.currentLasedTarget)
+    if not targetUnit or not targetUnit:isExist() then
+        -- Check if unit was destroyed vs moved out of range
+        if not targetUnit then
+            -- Unit.getByName() returned nil - target was destroyed
+            JTAC.MESSAGES.setMsg("GOOD EFFECT! Target destroyed: " .. mission.target.currentLasedTarget, 10, 2, true, mission.playerGroupID)
+            debugMsg("Target destroyed: " .. mission.target.currentLasedTarget)
+            -- Refresh target menu to remove destroyed target
+            timer.scheduleFunction(function() 
+                if mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) then
+                    local jtacunit = Group.getByName(mission.target.droneName):getUnit(1)
+                    if jtacunit then JTAC.NewMarkerScanForPlayer(mission) end
+                elseif mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) then
+                    local jtacunit = Group.getByName(mission.target.groundName):getUnit(1)
+                    if jtacunit then JTAC.NewMarkerScanForPlayer(mission) end
+                end
+            end, nil, timer.getTime() + 1)
+        else
+            -- Unit exists but isExist() is false - moved out of range or inactive
+            debugMsg("Target unit no longer active (out of range): " .. mission.target.currentLasedTarget)
+        end
+        mission.target.currentLasedTarget = "STOP"
+        mission.target.lastLasedPosition = nil
+        if mission.target.laserSpot ~= nil then
+            mission.target.laserSpot:destroy()
+            mission.target.laserSpot = nil
+        end
+
+        return nil
+    end
+    
+    local targetCoord = targetUnit:getPosition().p
+    
+    -- Check if target has moved significantly
+    local shouldUpdate = false
+    if not mission.target.lastLasedPosition then
+        -- Store initial position but don't update laser (already created)
+        mission.target.lastLasedPosition = {x = targetCoord.x, y = targetCoord.y, z = targetCoord.z}
+        --debugMsg("Stored initial position for: " .. mission.target.currentLasedTarget)
+    else
+        -- Check distance moved
+        local dx = targetCoord.x - mission.target.lastLasedPosition.x
+        local dz = targetCoord.z - mission.target.lastLasedPosition.z
+        local distance = math.sqrt(dx*dx + dz*dz)
+        
+        if distance > 10 then  -- 10 meter threshold to avoid micro-movements
+            shouldUpdate = true
+            mission.target.lastLasedPosition = {x = targetCoord.x, y = targetCoord.y, z = targetCoord.z}
+            debugMsg("Target moved " .. string.format("%.1f", distance) .. "m, updating laser for: " .. mission.target.currentLasedTarget)
+        end
+    end
+    
+    -- Only update laser if target moved significantly
+    if shouldUpdate then
+        if mission.target.laserSpot ~= nil then
+            mission.target.laserSpot:destroy()
+        end
+        
+        local jtacunit = nil
+        if mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) then
+            jtacunit = Group.getByName(mission.target.droneName):getUnit(1)
+        elseif mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) then
+            jtacunit = Group.getByName(mission.target.groundName):getUnit(1)
+        end
+        
+        if jtacunit then
+            mission.target.laserSpot = Spot.createLaser(jtacunit, nil, targetCoord, mission.target.laserCode)
+        else
+            debugMsg("Warning: No JTAC unit found for laser update")
+        end
+    end
+    
+    return time + 1.0  -- Check every second
 end;
 
 function JTAC.BILLUM.illuminationBombOnMark(position)
     timer.scheduleFunction(JTAC.BILLUM.illuminationBombOnMarkDelay, position, timer.getTime() + 15)
-    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Requesting current target illumination. ", 7, 1, true)
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Roger, painting your target now.... Illumination Bomb on its way. " , 30, 8, true)
+    JTAC.MESSAGES.setMsg(" Requesting current target illumination. ", 7, 1, true, JTAC.playerGroupID)
+	JTAC.MESSAGES.setMsg(" Roger, painting your target now.... Illumination Bomb on its way. " , 30, 8, true, JTAC.playerGroupID)
 end;
 
 function JTAC.BILLUM.triggerIllumBomb(mark)
@@ -1056,16 +1476,16 @@ end;
 
 function JTAC.SMOKE.smokeOnMark(position)
     timer.scheduleFunction(JTAC.SMOKE.triggerSmokeRed, position, timer.getTime() + 15)
-    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Requesting smoke on selected target. ", 7, 1, true)
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Roger, painting your target now with red smoke. ETA 15s " , 30, 8, true)
+    JTAC.MESSAGES.setMsg(" Requesting smoke on selected target. ", 7, 1, true, JTAC.playerGroupID)
+	JTAC.MESSAGES.setMsg(" Roger, painting your target now with red smoke. ETA 15s " , 30, 8, true, JTAC.playerGroupID)
 end;
 
 function JTAC.SMOKE.smokeOnJtac(groundName)
     source = Group.getByName(groundName):getUnit(1)
     position = source:getPoint()
     timer.scheduleFunction(JTAC.SMOKE.triggerSmokeGreen, position, timer.getTime() + 15)
-    JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Requesting smoke Jtac position. ", 7, 1, true)
-	JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID," Roger, Green smoke on Jtac position. ETA 15s " , 30, 8, true)
+    JTAC.MESSAGES.setMsg(" Requesting smoke Jtac position. ", 7, 1, true, JTAC.playerGroupID)
+	JTAC.MESSAGES.setMsg(" Roger, Green smoke on Jtac position. ETA 15s " , 30, 8, true, JTAC.playerGroupID)
 end;
 
 function JTAC.SMOKE.triggerSmokeRed(position)
@@ -1075,32 +1495,6 @@ end;
 function JTAC.SMOKE.triggerSmokeGreen(position)
     trigger.action.smoke(position , trigger.smokeColor.Green)
 end;
-
-function JTAC.MESSAGES.setMessageDelayed(text, duration, delaySec, clear)
-	if clear == nil or clear == false then
-        clear = false
-	else
-		clear = true
-    end
-	timer.scheduleFunction(JTAC.MESSAGES.showMessage, {ptext = text, pduration = duration, pclear = clear}, timer.getTime() + delaySec)
-end
-
-function JTAC.MESSAGES.showMessage(parameters)
-	trigger.action.outText(parameters.ptext, parameters.pduration, parameters.pclear)
-end
-
-function JTAC.MESSAGES.setMessageDelayedForGroup(groupID, text, duration, delaySec, clear)
-	if clear == nil or clear == false then
-        clear = false
-	else
-		clear = true
-    end
-	timer.scheduleFunction(JTAC.MESSAGES.showMessageForGroup, {groupID = groupID, ptext = text, pduration = duration, pclear = clear}, timer.getTime() + delaySec)
-end
-
-function JTAC.MESSAGES.showMessageForGroup(parameters)
-	trigger.action.outTextForGroup(parameters.groupID, parameters.ptext, parameters.pduration, parameters.pclear)
-end
 
 function JTAC.SCAN.searchTargets(pPoint, pRadius, pType)
 	local foundUnits = {}
@@ -1146,47 +1540,39 @@ function JTAC.SCAN.searchTargets(pPoint, pRadius, pType)
 	return foundUnits
 end;
 
-function JTAC.TARGETMENU.menu(jtacname, markerPos, gpID)
+function JTAC.TARGETMENU.menuForPlayer(jtacname, markerPos, mission)
     -- Find targets
     local FoundUnits = JTAC.SCAN.searchTargets(markerPos, JTAC.searchRadius, {Object.Category.UNIT, Object.Category.STATIC, Object.Category.SCENERY})
 
     -- Remove previous menu if it exists
-    if JTAC.TARGETMENU.menuHandles and JTAC.TARGETMENU.menuHandles[gpID] then
-        missionCommands.removeItemForGroup(gpID, JTAC.TARGETMENU.menuHandles[gpID])
-        JTAC.TARGETMENU.menuHandles[gpID] = nil
+    if mission.menuHandles.L1 then
+        missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.L1)
+        mission.menuHandles.L1 = nil
     end
 
     -- No targets
     if not FoundUnits or #FoundUnits == 0 then
-        JTAC.MESSAGES.setMessageDelayedForGroup(JTAC.playerGroupID,"UZI 1: No Target found in the zone, Lase the mark?", 30, 8, true)
+        JTAC.MESSAGES.setMsg("UZI 1: No Target found in the zone, Lase the mark?", 30, 8, true, mission.playerGroupID)
         return false
     end
 
     -- Create the base submenu
-    if not JTAC.TARGETMENU.menuHandles then JTAC.TARGETMENU.menuHandles = {} end
-    local menu = missionCommands.addSubMenuForGroup(gpID, "Target List", JTAC.J1)
-    JTAC.TARGETMENU.menuHandles[gpID] = menu
+    mission.menuHandles.L1 = missionCommands.addSubMenuForGroup(mission.playerGroupID, "Target List", mission.menuHandles.J1)
 
     -- Add targets in cascaded "More" submenus, zoneCommander style
     local function addTargetsMenu(units, parentMenu)
         local count = 0
         local subMenu = parentMenu
         for i, targetUnit in ipairs(units) do
-           --[[ count = count + 1
-            -- After every 9 entries, create a new "More" submenu and add further entries there
-            if count > 1 and (count - 1) % 9 == 0 then
-                subMenu = missionCommands.addSubMenuForGroup(gpID, "More", subMenu)
-            end--]]
-            
             local GroupPosition = targetUnit:getPoint()
             local TYP = targetUnit:getTypeName()
             local TGT = targetUnit:getName()
             local CAT = targetUnit:getCategory()
             local OBJCAT = Object.getCategory(targetUnit)
             if JTAC.isExcludedTarget(TYP) and not JTAC.isExcludedTargetName(TGT) then
-                debugMsg("Adding target: "..TGT.." ("..TYP..")")
+                debugMsg("Adding target: "..TGT.." ("..TYP..") for player: " .. mission.player)
                 if count > 0 and count % 9 == 0 then
-                    subMenu = missionCommands.addSubMenuForGroup(gpID, "More", subMenu)
+                    subMenu = missionCommands.addSubMenuForGroup(mission.playerGroupID, "More", subMenu)
                 end
                 count = count + 1
                 local vars = {
@@ -1198,50 +1584,554 @@ function JTAC.TARGETMENU.menu(jtacname, markerPos, gpID)
                     Cat = CAT,
                     Objcat = OBJCAT
                 }
-                local tgtMenu = missionCommands.addSubMenuForGroup(gpID, TYP .. ":" .. TGT, subMenu)
-                missionCommands.addCommandForGroup(gpID, 'Lase the target', tgtMenu, JTAC.LASER.createLaserOnMark, vars)
-                missionCommands.addCommandForGroup(gpID, 'IR the target', tgtMenu, JTAC.IR.createInfraRedOnMark, vars)
-                missionCommands.addCommandForGroup(gpID, 'Smoke the target', tgtMenu, JTAC.SMOKE.smokeOnMark, vars.GroupPosition)
+                local tgtMenu = missionCommands.addSubMenuForGroup(mission.playerGroupID, TYP .. ":" .. TGT, subMenu)
+                
+                missionCommands.addCommandForGroup(mission.playerGroupID, 'Lase the target', tgtMenu, 
+                    function() JTAC.LASER.createLaserOnMarkForPlayer(mission, vars) end)
+                
+                missionCommands.addCommandForGroup(mission.playerGroupID, 'IR the target', tgtMenu, 
+                    function() JTAC.IR.createInfraRedOnMarkForPlayer(mission, vars) end)
+                
+                missionCommands.addCommandForGroup(mission.playerGroupID, 'Smoke the target', tgtMenu, 
+                    function() JTAC.SMOKE.smokeOnMarkForPlayer(mission, vars.GroupPosition) end)
             else
-                debugMsg("Excluded target: "..TGT.." ("..TYP..")") 
+                debugMsg("Excluded target: "..TGT.." ("..TYP..") for player: " .. mission.player) 
             end
         end
     end
 
-    addTargetsMenu(FoundUnits, menu)
+    addTargetsMenu(FoundUnits, mission.menuHandles.L1)
 end
 
+-- Legacy function for backward compatibility
+function JTAC.TARGETMENU.menu(jtacname, markerPos, gpID)
+    -- Find the mission associated with this group ID
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        if mission.playerGroupID == gpID then
+            JTAC.TARGETMENU.menuForPlayer(jtacname, markerPos, mission)
+            return
+        end
+    end
+end
+
+-- =====================================================================================
+-- MODULE INITIALIZATIONS
+-- =====================================================================================
+
+-- Initialize missing modules
+JTAC.MESSAGES = JTAC.MESSAGES or {}
+JTAC.SCAN = JTAC.SCAN or {}
+JTAC.TARGETMENU = JTAC.TARGETMENU or {}
+
+-- =====================================================================================
+-- MODULE INITIALIZATIONS
+-- =====================================================================================
+
+-- Initialize missing modules
+JTAC.MESSAGES = JTAC.MESSAGES or {}
+JTAC.SCAN = JTAC.SCAN or {}
+JTAC.TARGETMENU = JTAC.TARGETMENU or {}
+
+-- =====================================================================================
+-- PLAYER-SPECIFIC MODULE PLACEHOLDERS
+-- =====================================================================================
+
+-- These functions need to be implemented for each module (LASER, IR, SMOKE, BILLUM)
+-- For now, providing basic stubs that delegate to original functions for compatibility
+
+-- LASER module player-specific functions
+JTAC.LASER = JTAC.LASER or {}
+JTAC.LASER.createLaserOnMarkForPlayer = function(mission, vars)
+    if vars.Type == nil then
+		vars.Type = "Ground "
+	end
+	JTAC.MESSAGES.setMsg(mission.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with Laser code: ".. mission.target.laserCode ..", sending coordinates... ", 7, 1, true, mission.playerGroupID)
+    
+    -- Clear any existing laser
+	if mission.target.laserSpot ~= nil then
+		mission.target.laserSpot:destroy()
+		mission.target.laserSpot = nil
+	end
+	
+	-- Set the target before creating laser
+	mission.target.currentLasedTarget = vars.currentLasedTarget
+	mission.target.lastLasedPosition = nil  -- Reset position tracking
+	
+	JTAC.MESSAGES.setMsg("UZI 1: Roger, painting your target now.... Laser is now on. Code: " .. mission.target.laserCode, 30, 8, true, mission.playerGroupID)
+	JTAC.MESSAGES.setMsg("INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false, mission.playerGroupID)
+	
+	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
+		mission.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition, mission.target.laserCode)
+	elseif coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
+		mission.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition, mission.target.laserCode)
+	end
+	
+	local lat, long, alt = coord.LOtoLL(vars.GroupPosition)
+	local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
+	local MGRS = coord.LLtoMGRS(coord.LOtoLL(vars.GroupPosition))
+    JTAC.MESSAGES.setMsg("MGRS: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false, mission.playerGroupID)
+    
+    -- Only start tracking if target is not STOP and not a static mark
+    if mission.target.currentLasedTarget ~= "STOP" and vars.TGT ~= "Mark" then
+        debugMsg("Starting laser tracking for target: " .. mission.target.currentLasedTarget .. " for player: " .. mission.player)
+        timer.scheduleFunction(JTAC.targetLaserUpdatePosForPlayer, {mission = mission}, timer.getTime() + 2)
+    else
+        debugMsg("Static laser position for: " .. vars.TGT .. " for player: " .. mission.player)
+    end
+end
+
+JTAC.LASER.stopLaserForPlayer = function(mission)
+	mission.target.currentLasedTarget = "STOP"
+	mission.target.lastLasedPosition = nil  -- Clear position tracking
+	JTAC.MESSAGES.setMsg(mission.player .." : Terminate lasing.", 5, 1, true, mission.playerGroupID)
+	if mission.target.laserSpot ~= nil then
+		mission.target.laserSpot:destroy()
+		mission.target.laserSpot = nil
+		JTAC.MESSAGES.setMsg("Wilco. Laser terminated.", 10, 8, true, mission.playerGroupID)
+	else
+		JTAC.MESSAGES.setMsg("Negative. Currently not lasing a target", 10, 8, true, mission.playerGroupID)
+	end
+	debugMsg("Laser stopped for player: " .. mission.player)
+end
+
+-- IR module player-specific functions
+JTAC.IR = JTAC.IR or {}
+JTAC.IR.createInfraRedOnMarkForPlayer = function(mission, vars)
+    if vars.Type == nil then
+		vars.Type = "Ground "
+	end
+	JTAC.MESSAGES.setMsg(mission.player .." : Requesting target: " .. vars.Type .. ":" .. vars.TGT .. " painted with IR laser, sending coordinates... ", 7, 1, true, mission.playerGroupID)
+    
+    -- Clear any existing IR
+	if mission.target.irSpot ~= nil then
+		mission.target.irSpot:destroy()
+		mission.target.irSpot = nil
+	end
+	
+	-- Set the target before creating IR
+	mission.target.currentLasedTarget = vars.currentLasedTarget
+	mission.target.lastIRPosition = nil  -- Reset position tracking
+	
+	JTAC.MESSAGES.setMsg("UZI 1: Roger, painting your target now.... IR Laser is now on. " , 30, 8, true, mission.playerGroupID)
+	JTAC.MESSAGES.setMsg("INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false, mission.playerGroupID)  
+	
+	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
+		mission.target.irSpot = Spot.createInfraRed(vars.jtac, nil, vars.GroupPosition)       
+	elseif coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
+		mission.target.irSpot = Spot.createInfraRed(vars.jtac, nil, vars.GroupPosition)
+	end
+	
+	local lat, long, alt = coord.LOtoLL(vars.GroupPosition)
+	local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
+	local MGRS = coord.LLtoMGRS(coord.LOtoLL(vars.GroupPosition))
+    JTAC.MESSAGES.setMsg("MGRS: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false, mission.playerGroupID)
+    
+    -- Only start tracking if target is not STOP and not a static mark
+    if mission.target.currentLasedTarget ~= "STOP" and vars.TGT ~= "Mark" then
+        debugMsg("Starting IR tracking for target: " .. mission.target.currentLasedTarget .. " for player: " .. mission.player)
+        timer.scheduleFunction(JTAC.targetIRUpdatePosForPlayer, {mission = mission}, timer.getTime() + 2)
+    else
+        debugMsg("Static IR position for: " .. vars.TGT .. " for player: " .. mission.player)
+    end
+end
+
+JTAC.IR.stopIRForPlayer = function(mission)
+	mission.target.currentLasedTarget = "STOP"
+	mission.target.lastIRPosition = nil  -- Clear position tracking
+	JTAC.MESSAGES.setMessageDelayed("PLAYER: Terminate IR lasing.", 5, 1, true)
+	if mission.target.irSpot ~= nil then
+		mission.target.irSpot:destroy()
+		mission.target.irSpot = nil
+		JTAC.MESSAGES.setMessageDelayed("Wilco. IR laser terminated.", 10, 8, true)
+	else
+		JTAC.MESSAGES.setMessageDelayed(" Negative. Currently not IR lasing a target", 10, 8, true)
+	end
+	debugMsg("IR stopped for player: " .. mission.player)
+end
+
+-- SMOKE module player-specific functions
+JTAC.SMOKE = JTAC.SMOKE or {}
+JTAC.SMOKE.smokeOnMarkForPlayer = function(mission, pos)
+    timer.scheduleFunction(JTAC.SMOKE.triggerSmokeRed, pos, timer.getTime() + 15)
+    JTAC.MESSAGES.setMsg(mission.player .. " : Requesting smoke on target.", 7, 1, true, mission.playerGroupID)
+	JTAC.MESSAGES.setMsg(" Roger, painting your target now with red smoke. ETA 15s " , 30, 8, true, mission.playerGroupID)
+end
+
+JTAC.SMOKE.smokeOnJtacForPlayer = function(mission, groupName)
+    if Group.getByName(groupName) and Group.getByName(groupName):getUnit(1) then
+        local pos = Group.getByName(groupName):getUnit(1):getPosition().p
+        timer.scheduleFunction(JTAC.SMOKE.triggerSmokeGreen, pos, timer.getTime() + 15)
+        JTAC.MESSAGES.setMsg(mission.player .. " : Requesting smoke on JTAC position.", 7, 1, true, mission.playerGroupID)
+        JTAC.MESSAGES.setMsg(" Roger, Green smoke on Jtac position. ETA 15s " , 30, 8, true, mission.playerGroupID)
+    else
+        JTAC.MESSAGES.setMsg("Error: Cannot find JTAC unit for smoke marking", 10, 2, true, mission.playerGroupID)
+    end
+end
+
+-- BILLUM module player-specific functions  
+JTAC.BILLUM = JTAC.BILLUM or {}
+JTAC.BILLUM.illuminationBombOnMarkForPlayer = function(mission, pos)
+    timer.scheduleFunction(JTAC.BILLUM.illuminationBombOnMarkDelay, pos, timer.getTime() + 15)
+    JTAC.MESSAGES.setMsg(mission.player .. " : Requesting current target illumination. ", 7, 1, true, mission.playerGroupID)
+	JTAC.MESSAGES.setMsg(" Roger, painting your target now.... Illumination Bomb on its way. " , 30, 8, true, mission.playerGroupID)
+end
+
+-- =====================================================================================
+-- MESSAGING FUNCTIONS
+-- =====================================================================================
+
+function JTAC.MESSAGES.setMessageDelayed(text, duration, delaySec, clear)
+	-- Set default values for nil parameters
+	if text == nil then
+        text = "Missing message text"
+    end
+    
+    if duration == nil then
+        duration = 10
+    end
+    
+    if delaySec == nil then
+        delaySec = 0.1 -- Use a small default delay to ensure timer works properly
+    end
+    
+    if clear == nil or clear == false then
+        clear = false
+	else
+		clear = true
+    end
+	timer.scheduleFunction(JTAC.MESSAGES.showMessage, {ptext = text, pduration = duration, pclear = clear}, timer.getTime() + delaySec)
+end
+
+function JTAC.MESSAGES.showMessage(parameters)
+	trigger.action.outText(parameters.ptext, parameters.pduration, parameters.pclear)
+end
+
+function JTAC.MESSAGES.showMessageForGroup(parameters)
+	trigger.action.outTextForGroup(parameters.groupID, parameters.ptext, parameters.pduration, parameters.pclear)
+end
+
+--- Finds a player's group ID by their player name.
+-- @param playerName The name of the player to search for
+-- @return number|nil The group ID if found, nil otherwise
+function JTAC.MESSAGES.getPlayerGroupIDByName(playerName)
+    if not playerName then
+        return nil
+    end
+    
+    local coalitions = {coalition.side.BLUE, coalition.side.RED, coalition.side.NEUTRAL}
+    local categories = {Group.Category.AIRPLANE, Group.Category.GROUND, Group.Category.SHIP, Group.Category.HELICOPTER}
+    
+    for _, side in pairs(coalitions) do
+        for _, category in pairs(categories) do
+            local groups = coalition.getGroups(side, category)
+            if groups then
+                for _, group in pairs(groups) do
+                    if group and group:isExist() then
+                        local units = group:getUnits()
+                        if units then
+                            for _, unit in pairs(units) do
+                                if unit and unit:isExist() then
+                                    local unitPlayerName = unit:getPlayerName()
+                                    if unitPlayerName == playerName then
+                                        return group:getID()
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return nil
+end
+
+--- Enhanced message function that can target specific players or broadcast to all.
+-- @param text The message text to display
+-- @param duration (optional) How long to show the message (seconds)
+-- @param delaySec (optional) Delay before showing message (seconds)
+-- @param clear (optional) Whether to clear existing messages
+-- @param groupID (optional) Specific group ID to target
+-- @param playerName (optional) Specific player name to target
+-- @return void
+function JTAC.MESSAGES.setMsg(text, duration, delaySec, clear, groupID, playerName)
+    
+    -- If groupID is not provided, try to determine target
+    if not groupID then
+        if playerName then
+            -- Try to find specific player's group
+            groupID = getPlayerGroupIDByName(playerName)
+        end
+        
+        -- If still no specific target, send to all players
+        if not groupID then
+            debugMsg("No specific player target, sending message to all players: " .. text)
+            trigger.action.outText(text, duration or 10)
+            return
+        end
+    end
+    
+	if clear == nil or clear == false then
+        clear = false
+	else
+		clear = true
+    end
+    
+    -- Use minimum delay of 0.1 seconds instead of 0 for timer reliability
+    local actualDelay = math.max(delaySec or 0, 0.1)
+	timer.scheduleFunction(JTAC.MESSAGES.showMessageForGroup, {groupID = groupID, ptext = text, pduration = duration or 10, pclear = clear}, timer.getTime() + actualDelay)
+end
+
+--- Broadcasts a message to all players in the mission.
+-- @param text The message text to display
+-- @param duration (optional) How long to show the message (seconds)
+-- @param delaySec (optional) Delay before showing message (seconds)
+-- @param clear (optional) Whether to clear existing messages
+-- @return void
+function JTAC.MESSAGES.setMsgToAll(text, duration, delaySec, clear)
+    if clear == nil or clear == false then
+        clear = false
+    else
+        clear = true
+    end
+    
+    local actualDelay = math.max(delaySec or 0, 0.1)
+    timer.scheduleFunction(function()
+        trigger.action.outText(text, duration or 10)
+    end, nil, timer.getTime() + actualDelay)
+end
+
+-- =====================================================================================
+-- UTILITY FUNCTIONS
+-- =====================================================================================
+
+function JTAC.NewMarkerScanForPlayer(mission)
+
+    mission.target.currentLasedTarget = "STOP"
+    if mission.target.irSpot ~= nil then
+        mission.target.irSpot:destroy()
+        mission.target.irSpot = nil
+    end
+    if mission.target.laserSpot ~= nil then
+        mission.target.laserSpot:destroy()
+        mission.target.laserSpot = nil
+    end
+
+    if mission.menuHandles.L1 ~= nil then
+        missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.L1)
+        mission.menuHandles.L1 = missionCommands.addSubMenuForGroup(mission.playerGroupID, "Target List", mission.menuHandles.J1)
+    end
+    
+    local source = nil
+    if mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) then
+        source = Group.getByName(mission.target.droneName):getUnit(1)
+    elseif mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) then
+        source = Group.getByName(mission.target.groundName):getUnit(1)
+    end
+    
+    if source then
+        JTAC.TARGETMENU.menuForPlayer(source, mission.target.scanPos, mission)
+        debugMsg("Rescanning zone for player: " .. mission.player)
+    end
+end
+
+-- Legacy function for backward compatibility
 function JTAC.NewMarkerScan()
-
-    JTAC.target.currentLasedTarget = "STOP"
-    if JTAC.target.irSpot ~= nil then
-        --JTAC.MESSAGES.setMessageDelayed("PLAYER: Terminate lasing.", 5, 1, true)
-		JTAC.target.irSpot:destroy()
-		JTAC.target.irSpot = nil
-	end
-    if JTAC.target.laserSpot ~= nil then
-        --JTAC.MESSAGES.setMessageDelayed("PLAYER: Terminate lasing.", 5, 1, true)
-		JTAC.target.laserSpot:destroy()
-		JTAC.target.laserSpot = nil
-	end
-
-    if JTAC.TARGETMENU.L1 ~= nil then
-        missionCommands.removeItemForGroup(JTAC.playerGroupID, JTAC.TARGETMENU.L1)
-        JTAC.TARGETMENU.L1 = missionCommands.addSubMenuForGroup(JTAC.playerGroupID, "Target List", JTAC.J1)
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        JTAC.NewMarkerScanForPlayer(mission)
+        break
     end
-    if JTAC.target.droneName ~= "" then
-        source = Group.getByName(JTAC.target.droneName):getUnit(1)
-        --trigger.action.outText("source: " .. source, 10, false)
-    elseif JTAC.target.groundName ~= "" then
-        source = Group.getByName(JTAC.target.groundName):getUnit(1)
+end
+
+function JTAC.setMenuForPlayer(mission)
+    
+    if mission.menuHandles.menuPrinc then
+        missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.menuPrinc)
     end
-    JTAC.TARGETMENU.menu(source, JTAC.target.scanPos, JTAC.playerGroupID)
-				debugMsg("Rescanning zone")
+
+    local gpID = mission.playerGroupID
+    
+    mission.menuHandles.menuPrinc = missionCommands.addSubMenuForGroup(gpID, 'JTAC')
+    mission.menuHandles.J1 = missionCommands.addSubMenuForGroup(gpID, 'JTAC LASE', mission.menuHandles.menuPrinc)
+    
+    -- Show different menu options based on mission state
+    if not mission.target.laserCode then
+        -- No JTAC assigned yet - show request option
+        mission.menuHandles.JR1 = missionCommands.addCommandForGroup(gpID, 'Request JTAC Lase', mission.menuHandles.J1, 
+            function() JTAC.requestJTACAssignment(mission) end)
+    elseif mission.awaitingMarker then
+        -- JTAC assigned but waiting for marker - show reminder and cancel option
+        mission.menuHandles.JR2 = missionCommands.addCommandForGroup(gpID, 'Reminder: Place marker (' .. (mission.jtacCallSign or "Unknown") .. ')', mission.menuHandles.J1, 
+            function() 
+                JTAC.MESSAGES.setMsg("Place map marker with text: " .. (mission.jtacCallSign or "Unknown"), 10, 2, true, mission.playerGroupID)
+                JTAC.MESSAGES.setMsg("Your laser code: " .. mission.target.laserCode, 8, 2, false, mission.playerGroupID)
+            end)
+        mission.menuHandles.JC1 = missionCommands.addCommandForGroup(gpID, 'Cancel JTAC Request', mission.menuHandles.J1, 
+            function() JTAC.cancelJTACRequest(mission) end)
+    else
+        -- JTAC active - show normal drone/ground options
+        mission.menuHandles.JD11 = missionCommands.addCommandForGroup(gpID, 'Request Drone JTAC [20 CMD]', mission.menuHandles.J1, 
+            function() JTAC.requestDroneForPlayer(mission) end)
+        
+        mission.menuHandles.JG11 = missionCommands.addCommandForGroup(gpID, 'Request Ground JTAC [10 CMD]', mission.menuHandles.J1,
+            function() JTAC.requestGroundForPlayer(mission) end)
+    end
+    
+    mission.menuHandles.O2 = missionCommands.addSubMenuForGroup(gpID, 'OPTIONS', mission.menuHandles.menuPrinc)
+
+    -- Target Priority submenu
+    mission.menuHandles.TP = missionCommands.addSubMenuForGroup(gpID, 'Target Priority', mission.menuHandles.O2)
+    
+    missionCommands.addCommandForGroup(gpID, 'Priority: Air Defence', mission.menuHandles.TP, 
+        function() JTAC.setTargetPriorityForPlayer(mission, "Air Defence") end)
+    
+    missionCommands.addCommandForGroup(gpID, 'Priority: Armour', mission.menuHandles.TP, 
+        function() JTAC.setTargetPriorityForPlayer(mission, "Armour") end)
+    
+    missionCommands.addCommandForGroup(gpID, 'Priority: Artillery', mission.menuHandles.TP, 
+        function() JTAC.setTargetPriorityForPlayer(mission, "Artillery") end)
+    
+    missionCommands.addCommandForGroup(gpID, 'Priority: Infantry', mission.menuHandles.TP, 
+        function() JTAC.setTargetPriorityForPlayer(mission, "Infantry") end)
+    
+    missionCommands.addCommandForGroup(gpID, 'Priority: None (Default)', mission.menuHandles.TP, 
+        function() JTAC.setTargetPriorityForPlayer(mission, "None") end)
+    
+    mission.menuHandles.N9 = missionCommands.addSubMenuForGroup(gpID, 'DISMISS PACKAGE', mission.menuHandles.menuPrinc)
+    
+    local statusMsg = "Menu created for player: " .. mission.player
+    if mission.target.laserCode then
+        statusMsg = statusMsg .. " (Laser Code: " .. mission.target.laserCode .. ")"
+    end
+    if mission.jtacCallSign then
+        statusMsg = statusMsg .. " (Call Sign: " .. mission.jtacCallSign .. ")"
+    end
+    debugMsg(statusMsg)
+end
+
+function JTAC.removeMenuForPlayer(mission)
+    if mission.menuHandles.menuPrinc then
+        missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.menuPrinc)
+    end
+end
+
+-- Legacy functions for backward compatibility
+function JTAC.setMenu(gpID)
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        if mission.playerGroupID == gpID then
+            JTAC.setMenuForPlayer(mission)
+            break
+        end
+    end
 end
 
 function JTAC.removeMenu(gpID)
-	missionCommands.removeItemForGroup(gpID, menuPrinc)
-end;
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        if mission.playerGroupID == gpID then
+            JTAC.removeMenuForPlayer(mission)
+            break
+        end
+    end
+end
+
+;
+
+-- =====================================================================================
+-- MULTI-PLAYER UTILITY FUNCTIONS  
+-- =====================================================================================
+
+-- Get active missions status for debugging/monitoring
+function JTAC.getActiveMissionsStatus()
+    local statusLines = {}
+    statusLines[#statusLines + 1] = "=== ACTIVE JTAC MISSIONS ==="
+    
+    local count = 0
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        count = count + 1
+        local status = mission.support and "Available" or "In Service"
+        if mission.awaitingMarker then
+            status = "Awaiting Marker"
+        elseif not mission.target.laserCode then
+            status = "No Assignment"
+        end
+        
+        local assetType = ""
+        if mission.target.droneName ~= "" then
+            assetType = "Drone: " .. mission.target.droneName
+        elseif mission.target.groundName ~= "" then
+            assetType = "Ground: " .. mission.target.groundName
+        else
+            assetType = "No Asset"
+        end
+        
+        statusLines[#statusLines + 1] = string.format("Player: %s | Status: %s | Code: %s | Call Sign: %s | %s", 
+            playerName, status, mission.target.laserCode or "None", mission.jtacCallSign or "None", assetType)
+    end
+    
+    if count == 0 then
+        statusLines[#statusLines + 1] = "No active missions"
+    end
+    
+    statusLines[#statusLines + 1] = string.format("Total missions: %d | Used laser codes: %d", 
+        count, JTAC.getUsedLaserCodeCount())
+    
+    return table.concat(statusLines, "\n")
+end
+
+-- Get count of used laser codes
+function JTAC.getUsedLaserCodeCount()
+    local count = 0
+    for code, inUse in pairs(JTAC.UsedLaserCodes) do
+        if inUse then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- Check if laser code is available
+function JTAC.isLaserCodeAvailable(code)
+    return not JTAC.UsedLaserCodes[code]
+end
+
+-- Get list of all used laser codes
+function JTAC.getUsedLaserCodes()
+    local codes = {}
+    for code, inUse in pairs(JTAC.UsedLaserCodes) do
+        if inUse then
+            codes[#codes + 1] = code
+        end
+    end
+    table.sort(codes)
+    return codes
+end
+
+-- Find mission by player name
+function JTAC.getMissionByPlayer(playerName)
+    return JTAC.ActiveMissions[playerName]
+end
+
+-- Find mission by group ID
+function JTAC.getMissionByGroupID(groupID)
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        if mission.playerGroupID == groupID then
+            return mission
+        end
+    end
+    return nil
+end
+
+-- Debug command to show mission status (can be called from F10 menu if needed)
+function JTAC.showMissionStatus()
+    local status = JTAC.getActiveMissionsStatus()
+    debugMsg(status)
+    return status
+end
+
+-- =====================================================================================
+-- COMMAND POINT FUNCTIONS
+-- =====================================================================================
 
 function JTAC.spendCMDPoints(playerName, cost)
     if PlayerTrackerInstance then
@@ -1260,28 +2150,6 @@ function JTAC.spendCMDPoints(playerName, cost)
     end
 end
 
-function JTAC.setMenu(gpID)
-    
-    if menuPrinc then
-        missionCommands.removeItemForGroup(gpID, menuPrinc)
-    end
-
-	menuPrinc = missionCommands.addSubMenuForGroup(gpID, 'JTAC')
-	JTAC.J1 = missionCommands.addSubMenuForGroup(gpID, 'JTAC LASE', menuPrinc)
-	JTAC.JD11 = missionCommands.addCommandForGroup(gpID, 'Request Drone JTAC [20 CMD]', JTAC.J1, JTAC.requestDrone, nil)
-	JTAC.JG11 = missionCommands.addCommandForGroup(gpID, 'Request Ground JTAC [10 CMD]', JTAC.J1, JTAC.requestGround, nil)
-	JTAC.O2 = missionCommands.addSubMenuForGroup(gpID, 'OPTIONS', menuPrinc)
-
-	-- Target Priority submenu
-	JTAC.TP = missionCommands.addSubMenuForGroup(gpID, 'Target Priority', JTAC.O2)
-	missionCommands.addCommandForGroup(gpID, 'Priority: Air Defence', JTAC.TP, JTAC.setTargetPriority, "Air Defence")
-	missionCommands.addCommandForGroup(gpID, 'Priority: Armour', JTAC.TP, JTAC.setTargetPriority, "Armour")
-	missionCommands.addCommandForGroup(gpID, 'Priority: Artillery', JTAC.TP, JTAC.setTargetPriority, "Artillery")
-	missionCommands.addCommandForGroup(gpID, 'Priority: Infantry', JTAC.TP, JTAC.setTargetPriority, "Infantry")
-	missionCommands.addCommandForGroup(gpID, 'Priority: None (Default)', JTAC.TP, JTAC.setTargetPriority, "None")
-	JTAC.N9 = missionCommands.addSubMenuForGroup(gpID, 'DISMISS PACKAGE', menuPrinc)
-end;
-
 -- =====================================================================================
 -- SCRIPT INITIALIZATION
 -- =====================================================================================
@@ -1292,7 +2160,7 @@ local function initialize()
     debugMsg("JTAC Script v0.2 Initializing...")
     debugMsg("========================================")
 
-    world.addEventHandler(eventJtac);
+    world.addEventHandler(EVENTJTAC);
     timer.scheduleFunction(JTAC.setAvailability, nil, timer.getTime() + 1)
     debugMsg("JTAC LOADED!")
 
