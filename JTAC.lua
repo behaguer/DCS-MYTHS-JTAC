@@ -7,8 +7,8 @@ local EVENTJTAC = {};
 -- =====================================================================================
 
 -- Add configuration properties to existing JTAC table (don't overwrite)
-JTAC.debug = true             -- enable debug messages in DCS log and on screen
-JTAC.production_mode = false  -- when true, disables all debug messages even if debug is true
+JTAC.debug = false             -- enable debug messages in DCS log and on screen
+JTAC.production_mode = true  -- when true, disables all debug messages even if debug is true
 
 -- Options
 JTAC.groupPrefix = false        -- restrict F10 menu to group with specific prefix
@@ -1952,8 +1952,8 @@ function JTAC.setMenuForPlayer(mission)
 
     local gpID = mission.playerGroupID
     
-    mission.menuHandles.menuPrinc = missionCommands.addSubMenuForGroup(gpID, 'JTAC')
-    mission.menuHandles.J1 = missionCommands.addSubMenuForGroup(gpID, 'JTAC LASE', mission.menuHandles.menuPrinc)
+    mission.menuHandles.menuPrinc = missionCommands.addSubMenuForGroup(gpID, 'JTAC Commms')
+    mission.menuHandles.J1 = missionCommands.addSubMenuForGroup(gpID, 'Call JTAC LASE', mission.menuHandles.menuPrinc)
     
     -- Show different menu options based on mission state
     if not mission.target.laserCode then
