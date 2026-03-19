@@ -585,7 +585,7 @@ end
 
 -- Request dismissal of active JTAC package (drone or ground) and clean up mission state
 function JTAC.requestDismissPackageForPlayer(mission, groupType)
-    JTAC.MESSAGES.setMsg(mission.player .." : You can RTB. Thank you for the support.", 10, 2, true, mission.playerGroupID)
+    JTAC.MESSAGES.setMsg(mission.player .." : Mission over " .. mission.jtacCallSign .. " you can RTB. Thanks for the support.", 10, 2, true, mission.playerGroupID)
     timer.scheduleFunction(JTAC.dismissPackageForPlayer, {mission = mission, groupType = groupType}, timer.getTime() + 15)
     if groupType == "DRONE" and mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) and Group.getByName(mission.target.droneName):getUnit(1) ~= nil then
         JTAC.MESSAGES.setMessageDelayed(mission.airCallsign .. ": Mission over RTB.", 10, 7, true)
@@ -1550,7 +1550,7 @@ function JTAC.targetLaserUpdatePosForPlayer(params)
         local dz = targetCoord.z - mission.target.lastLasedPosition.z
         local distance = math.sqrt(dx*dx + dz*dz)
         
-        if distance > 10 then  -- 10 meter threshold to avoid micro-movements
+        if distance > 8 then  -- 8 meter threshold to avoid micro-movements
             shouldUpdate = true
             mission.target.lastLasedPosition = {x = targetCoord.x, y = targetCoord.y, z = targetCoord.z}
             debugMsg("Target moved " .. string.format("%.1f", distance) .. "m, updating laser for: " .. mission.target.currentLasedTarget)
@@ -1583,7 +1583,7 @@ end;
 function JTAC.BILLUM.illuminationBombOnMark(position)
     timer.scheduleFunction(JTAC.BILLUM.illuminationBombOnMarkDelay, position, timer.getTime() + 15)
     JTAC.MESSAGES.setMsg(" Requesting current target illumination. ", 7, 1, true, JTAC.playerGroupID)
-	JTAC.MESSAGES.setMsg(" Roger, painting your target now.... Illumination Bomb on its way. " , 30, 8, true, JTAC.playerGroupID)
+	JTAC.MESSAGES.setMsg(" Roger, painting your target now.... Illumination round is on its way. " , 30, 8, true, JTAC.playerGroupID)
 end;
 
 function JTAC.BILLUM.triggerIllumBomb(mark)
@@ -1755,6 +1755,12 @@ end
 
 -- LASER module player-specific functions
 JTAC.LASER.createLaserOnMarkForPlayer = function(mission, vars)
+    -- Check if laser code exists
+    if not mission.target.laserCode then
+        JTAC.MESSAGES.setMsg("ERROR: No laser code assigned. Request JTAC assignment first.", 10, 2, true, mission.playerGroupID)
+        return
+    end
+    
     if vars.Type == nil then
 		vars.Type = "Ground "
 	end
@@ -1766,23 +1772,33 @@ JTAC.LASER.createLaserOnMarkForPlayer = function(mission, vars)
 		mission.target.laserSpot = nil
 	end
 	
+	-- Stop any existing laser tracking  
+	mission.target.currentLasedTarget = "STOP"
+	mission.target.lastLasedPosition = nil
+	
 	-- Set the target before creating laser
 	mission.target.currentLasedTarget = vars.currentLasedTarget
 	mission.target.lastLasedPosition = nil  -- Reset position tracking
 	
-	JTAC.MESSAGES.setMsg(mission.airCallsign .. ": Roger, painting your target now.... Laser is now on. Code: " .. mission.target.laserCode, 30, 8, true, mission.playerGroupID)
-	JTAC.MESSAGES.setMsg("INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false, mission.playerGroupID)
+	debugMsg("Creating laser at position: " .. vars.GroupPosition.x .. ", " .. vars.GroupPosition.z .. " with code: " .. mission.target.laserCode)
+	
+	JTAC.MESSAGES.setMsg(mission.airCallsign .. ": Roger, painting the " ..vars.Type.. vars.TGT.. ".... Sparkle on, sparkle on, go hot .... code: " .. mission.target.laserCode, 30, 8, true, mission.playerGroupID)
 	
 	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
-		mission.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition, mission.target.laserCode)
+		mission.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition, tonumber(mission.target.laserCode))
+		debugMsg("Created RED laser spot")
 	elseif coalition.getPlayers(coalition.side.BLUE)[1] ~= nil then
-		mission.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition, mission.target.laserCode)
+		mission.target.laserSpot = Spot.createLaser(vars.jtac, nil, vars.GroupPosition, tonumber(mission.target.laserCode))
+		debugMsg("Created BLUE laser spot")
+	else
+		debugMsg("ERROR: No coalition players found")
 	end
 	
-	local lat, long, alt = coord.LOtoLL(vars.GroupPosition)
-	local coordSTR = JTAC.getCoordinatesSTR(lat, long, alt)
-	local MGRS = coord.LLtoMGRS(coord.LOtoLL(vars.GroupPosition))
-    JTAC.MESSAGES.setMsg("MGRS: " .. MGRS.UTMZone .. ' ' .. MGRS.MGRSDigraph .. ' ' .. MGRS.Easting .. ' ' .. MGRS.Northing, 60, 12, false, mission.playerGroupID)
+	if mission.target.laserSpot then
+		debugMsg("Laser spot created successfully")
+	else
+		debugMsg("ERROR: Failed to create laser spot")
+	end
     
     -- Only start tracking if target is not STOP and not a static mark
     if mission.target.currentLasedTarget ~= "STOP" and vars.TGT ~= "Mark" then
@@ -1825,7 +1841,6 @@ JTAC.IR.createInfraRedOnMarkForPlayer = function(mission, vars)
 	mission.target.lastIRPosition = nil  -- Reset position tracking
 	
 	JTAC.MESSAGES.setMsg(mission.airCallsign .. ": Roger, painting your target now.... IR Laser is now on. " , 30, 8, true, mission.playerGroupID)
-	JTAC.MESSAGES.setMsg("INFO: lased target " ..vars.Type.. ":" .. vars.TGT, 30, 8, false, mission.playerGroupID)  
 	
 	if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
 		mission.target.irSpot = Spot.createInfraRed(vars.jtac, nil, vars.GroupPosition)       
@@ -1865,7 +1880,7 @@ end
 JTAC.SMOKE.smokeOnMarkForPlayer = function(mission, pos)
     timer.scheduleFunction(JTAC.SMOKE.triggerSmokeRed, pos, timer.getTime() + 15)
     JTAC.MESSAGES.setMsg(mission.player .. " : Requesting smoke on target.", 7, 1, true, mission.playerGroupID)
-	JTAC.MESSAGES.setMsg(" Roger, painting your target now with red smoke. ETA 15s " , 30, 8, true, mission.playerGroupID)
+	JTAC.MESSAGES.setMsg("Roger, painting your target now with red smoke. ETA 15s " , 30, 8, true, mission.playerGroupID)
 end
 
 JTAC.SMOKE.smokeOnJtacForPlayer = function(mission, groupName)
