@@ -345,8 +345,10 @@ local function JTAC_delayedMenu(args, time)
     local groupName = group:getName()
     local unitName = event.initiator:getName()
 
+    -- Get or create mission state for this player
     local mission = JTAC.getPlayerMission(playerName, groupID)
 
+    -- Update player info in their mission
     mission.player = playerName
     mission.model = event.initiator:getTypeName()
     mission.playerGroupID = groupID
@@ -357,7 +359,7 @@ local function JTAC_delayedMenu(args, time)
 
     local theatre = env.mission.theatre
 
-    if JTAC.groupPrefix == true and string.sub(groupName, 1, 4) == JTAC.Prefix then
+    if JTAC.groupPrefix == true and string.sub(groupName,1,4) == JTAC.Prefix then
         JTAC.setMenuForPlayer(mission)
         mission.groupAuth = true
     elseif JTAC.groupPrefix == false then
@@ -1659,9 +1661,11 @@ function JTAC.SCAN.searchTargets(pPoint, pRadius, pType)
     local foundUnits = {}
     local volS = {
         id = world.VolumeType.SPHERE,
-        params = { point = pPoint, radius = pRadius }
+        params = {
+            point = pPoint,
+            radius = pRadius
+        }
     }
-
     local ifFound = function(foundItem, val)
         local playerCoalition = coalition.side.BLUE
         if coalition.getPlayers(coalition.side.RED)[1] ~= nil then
@@ -1718,14 +1722,14 @@ function JTAC.TARGETMENU.menuForPlayer(jtacname, markerPos, mission)
         mission.menuHandles.L1 = nil
     end
 
+    -- No targets
     if not FoundUnits or #FoundUnits == 0 then
         JTAC.MESSAGES.setMsg(mission.airCallsign .. ": No Target found in the zone, Lase the mark?", 30, 8, true, mission.playerGroupID)
         return false
     end
 
-    mission.menuHandles.L1 = missionCommands.addSubMenuForGroup(
-        mission.playerGroupID, "Target List", mission.menuHandles.J1
-    )
+    -- Create the base submenu
+    mission.menuHandles.L1 = missionCommands.addSubMenuForGroup(mission.playerGroupID, "Target List", mission.menuHandles.J1)
 
     local function addTargetsMenu(units, parentMenu)
         local count = 0
@@ -1750,9 +1754,7 @@ function JTAC.TARGETMENU.menuForPlayer(jtacname, markerPos, mission)
                     Cat = CAT,
                     Objcat = OBJCAT
                 }
-                local tgtMenu = missionCommands.addSubMenuForGroup(
-                    mission.playerGroupID, TYP .. ":" .. TGT, subMenu
-                )
+                local tgtMenu = missionCommands.addSubMenuForGroup(mission.playerGroupID, TYP .. ":" .. TGT, subMenu)
                 missionCommands.addCommandForGroup(mission.playerGroupID, 'Lase the target', tgtMenu,
                     function() JTAC.LASER.createLaserOnMarkForPlayer(mission, vars) end)
                 missionCommands.addCommandForGroup(mission.playerGroupID, 'IR the target', tgtMenu,
@@ -1964,7 +1966,6 @@ function JTAC.MESSAGES.showMessageForGroup(parameters)
 end
 
 function JTAC.MESSAGES.getPlayerGroupIDByName(playerName)
-trigger.action.outText("JTAC.MESSAGES.getPlayerGroupIDByName",30,true)
     if not playerName then
         return nil
     end
