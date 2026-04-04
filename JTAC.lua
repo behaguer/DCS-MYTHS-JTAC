@@ -7,7 +7,7 @@ local EVENTJTAC = {};
 -- =====================================================================================
 
 -- Add configuration properties to existing JTAC table (don't overwrite)
-JTAC.debug = false             -- enable debug messages in DCS log and on screen
+JTAC.debug = true             -- enable debug messages in DCS log and on screen
 JTAC.production_mode = true  -- when true, disables all debug messages even if debug is true
 
 -- Options
@@ -283,7 +283,10 @@ function JTAC.getPlayerMission(playerName, playerGroupID)
             groundCallsign = JTAC.getRandomGroundCallsign(),
             
             -- UI Management
-            menuHandles = {}
+            menuHandles = {},
+            currentUnitName = nil,  -- Track which unit currently has the menu
+            currentGroupID = nil,   -- Track which group currently has the menu
+            disconnectTime = nil    -- Track when player disconnected for cleanup delay
         }
         
         debugMsg("Created new JTAC mission for player: " .. playerName)
@@ -295,7 +298,23 @@ function JTAC.getPlayerMission(playerName, playerGroupID)
     return JTAC.ActiveMissions[playerName]
 end
 
--- Clean up mission when player disconnects
+-- Remove menu from current unit (when switching units)
+function JTAC.removeMenuFromUnit(playerName)
+    local mission = JTAC.ActiveMissions[playerName]
+    if mission and mission.currentUnitName then
+        debugMsg("Removing menu from unit for player: " .. playerName .. " (unit: " .. mission.currentUnitName .. ") - preserving mission data: drone=" .. (mission.target.droneName or "none") .. ", ground=" .. (mission.target.groundName or "none"))
+        -- Remove menu from current unit
+        JTAC.removeMenuForPlayer(mission)
+        -- Clear current unit tracking but keep mission data
+        mission.currentUnitName = nil
+        mission.currentGroupID = nil
+        mission.playerUnit = nil
+    else
+        debugMsg("removeMenuFromUnit called for " .. playerName .. " but no mission or unit found")
+    end
+end
+
+-- Clean up mission completely when player disconnects from server
 function JTAC.cleanupPlayerMission(playerName)
     local mission = JTAC.ActiveMissions[playerName]
     if mission then
@@ -306,6 +325,9 @@ function JTAC.cleanupPlayerMission(playerName)
         if mission.target.groundName ~= "" then
             JTAC.dismissPackageForPlayer(mission, "GROUND")
         end
+        
+        -- Remove menu
+        JTAC.removeMenuForPlayer(mission)
         
         -- Release laser code and call sign
         JTAC.releaseLaserCode(mission.target.laserCode)
@@ -322,6 +344,45 @@ function JTAC.cleanupPlayerMission(playerName)
         JTAC.setAvailability()
         
         debugMsg("Cleaned up JTAC mission for player: " .. playerName)
+    end
+end
+
+-- Clean up missions for players who have disconnected from server
+function JTAC.cleanupDisconnectedPlayers()
+    local activePlayers = {}
+    
+    -- Get all players currently in the mission
+    for _, coalitionSide in pairs({coalition.side.RED, coalition.side.BLUE}) do
+        local players = coalition.getPlayers(coalitionSide)
+        for _, playerName in pairs(players) do
+            activePlayers[playerName] = true
+        end
+    end
+    
+    -- Check for missions belonging to disconnected players
+    for playerName, mission in pairs(JTAC.ActiveMissions) do
+        if not activePlayers[playerName] then
+            -- Extra safety check - don't clean up missions with active JTACs unless player has been gone for a while
+            if mission.target.droneName ~= "" or mission.target.groundName ~= "" then
+                -- Add a disconnect timer to prevent immediate cleanup of active missions
+                if not mission.disconnectTime then
+                    mission.disconnectTime = timer.getTime()
+                    debugMsg("Player " .. playerName .. " disconnected but has active JTACs, starting disconnect timer")
+                elseif timer.getTime() - mission.disconnectTime > 300 then  -- 5 minutes
+                    debugMsg("Cleaning up mission for long-disconnected player with active JTACs: " .. playerName)
+                    JTAC.cleanupPlayerMission(playerName)
+                end
+            else
+                -- No active JTACs, safe to clean up immediately
+                debugMsg("Cleaning up mission for disconnected player: " .. playerName)
+                JTAC.cleanupPlayerMission(playerName)
+            end
+        else
+            -- Player is active, clear any disconnect timer
+            if mission.disconnectTime then
+                mission.disconnectTime = nil
+            end
+        end
     end
 end
 
@@ -345,8 +406,42 @@ local function JTAC_delayedMenu(args, time)
     local groupName = group:getName()
     local unitName = event.initiator:getName()
 
-    -- Get or create mission state for this player
-    local mission = JTAC.getPlayerMission(playerName, groupID)
+    -- Check if player has existing mission
+    local mission = JTAC.ActiveMissions[playerName]
+    if mission then
+        debugMsg("Found existing mission for player: " .. playerName .. " (drone: " .. (mission.target.droneName or "none") .. ", ground: " .. (mission.target.groundName or "none") .. ", laserCode: " .. (mission.target.laserCode or "none") .. ")")
+        
+        -- Player has existing mission, check if it's already connected to this unit
+        if mission.currentUnitName == unitName and mission.currentGroupID == groupID then
+            -- Same unit, menu already exists, do nothing
+            debugMsg("Same unit reconnection, menu already exists for: " .. playerName)
+            return nil
+        else
+            -- Different unit, remove menu from old unit and connect to new unit
+            if mission.currentUnitName then
+                debugMsg("Removing menu from old unit: " .. (mission.currentUnitName or "unknown"))
+                JTAC.removeMenuForPlayer(mission)
+            end
+            
+            -- Update mission to new unit
+            mission.playerGroupID = groupID
+            mission.playerGroupName = groupName
+            mission.playerUnitName = unitName
+            mission.playerUnit = event.initiator
+            mission.playerPos = event.initiator:getPoint()
+            mission.currentUnitName = unitName
+            mission.currentGroupID = groupID
+            
+            -- Restore menu on new unit
+            JTAC.setMenuForPlayer(mission)
+            debugMsg("Reconnected existing mission to new unit for player: " .. playerName .. " (unit: " .. unitName .. ", group: " .. groupName .. ")")
+            return nil
+        end
+    else
+        debugMsg("No existing mission found for player: " .. playerName .. ", creating new one")
+        -- No existing mission, create new one
+        mission = JTAC.getPlayerMission(playerName, groupID)
+    end
 
     -- Update player info in their mission
     mission.player = playerName
@@ -356,6 +451,8 @@ local function JTAC_delayedMenu(args, time)
     mission.playerUnitName = unitName
     mission.playerUnit = event.initiator
     mission.playerPos = event.initiator:getPoint()
+    mission.currentUnitName = unitName
+    mission.currentGroupID = groupID
 
     local theatre = env.mission.theatre
 
@@ -390,59 +487,17 @@ function EVENTJTAC:onEvent(event)
         end
     end
 
-    if (world.event.S_EVENT_PLAYER_LEAVE_UNIT == event.id) and event.initiator then
+    -- Handle all events that should trigger menu removal from unit (but preserve missions)
+    if (event.id == world.event.S_EVENT_DEAD or event.id == world.event.S_EVENT_PILOT_DEAD or 
+        event.id == world.event.S_EVENT_EJECTION or event.id == world.event.S_EVENT_PLAYER_LEAVE_UNIT) and event.initiator then
         if event.initiator and event.initiator.getPlayerName then
             local playerName = event.initiator:getPlayerName()
             if playerName and playerName ~= "" then
-                local mission = JTAC.ActiveMissions[playerName]
-                if mission and mission.support == false then
-                    if mission.target.droneName ~= "" then
-                        JTAC.dismissPackageForPlayer(mission, "DRONE")
-                    elseif mission.target.groundName ~= "" then
-                        JTAC.dismissPackageForPlayer(mission, "GROUND")
-                    end
-                end
-                -- Clean up player mission completely
-                if playerName then JTAC.cleanupPlayerMission(playerName) end
+                -- Only remove menu from unit, keep mission data for reconnection
+                JTAC.removeMenuFromUnit(playerName)
             end
         end
-	end
-
-    if (world.event.S_EVENT_PILOT_DEAD == event.id) and event.initiator then
-        if event.initiator and event.initiator.getPlayerName then
-            local playerName = event.initiator:getPlayerName()
-            if playerName and playerName ~= "" then
-                local mission = JTAC.ActiveMissions[playerName]
-                if mission and mission.support == false then
-                    if mission.target.droneName ~= "" then
-                        JTAC.dismissPackageForPlayer(mission, "DRONE")
-                    elseif mission.target.groundName ~= "" then
-                        JTAC.dismissPackageForPlayer(mission, "GROUND")
-                    end
-                end
-                -- Clean up player mission
-                if playerName then JTAC.cleanupPlayerMission(playerName) end
-            end
-        end
-	end
-
-    if (world.event.S_EVENT_EJECTION == event.id) and event.initiator then
-        if event.initiator and event.initiator.getPlayerName then
-            local playerName = event.initiator:getPlayerName()
-            if playerName and playerName ~= "" then
-                local mission = JTAC.ActiveMissions[playerName]
-                if mission and mission.support == false then
-                    if mission.target.droneName ~= "" then
-                        JTAC.dismissPackageForPlayer(mission, "DRONE")
-                    elseif mission.target.groundName ~= "" then
-                        JTAC.dismissPackageForPlayer(mission, "GROUND")
-                    end
-                end
-                -- Clean up player mission
-                if playerName then JTAC.cleanupPlayerMission(playerName) end
-            end
-        end
-	end
+    end
 
 	if (world.event.S_EVENT_MARK_CHANGE == event.id) then
         -- NEW: Handle JTAC call sign marker placement
@@ -2078,6 +2133,8 @@ end
 
 function JTAC.setMenuForPlayer(mission)
     
+    debugMsg("Setting menu for player: " .. (mission.player or "unknown") .. " - LaserCode: " .. (mission.target.laserCode or "none") .. ", AwaitingMarker: " .. tostring(mission.awaitingMarker or false) .. ", DroneName: " .. (mission.target.droneName or "none") .. ", GroundName: " .. (mission.target.groundName or "none"))
+    
     if mission.menuHandles.menuPrinc then
         missionCommands.removeItemForGroup(mission.playerGroupID, mission.menuHandles.menuPrinc)
     end
@@ -2101,8 +2158,33 @@ function JTAC.setMenuForPlayer(mission)
             end)
         mission.menuHandles.JC1 = missionCommands.addCommandForGroup(gpID, 'Cancel JTAC Request', mission.menuHandles.J1, 
             function() JTAC.cancelJTACRequest(mission) end)
+    elseif mission.target.droneName ~= "" or mission.target.groundName ~= "" then
+        -- JTAC units are active - show control options
+        local jtacname = mission.target.droneName ~= "" and mission.target.droneName or mission.target.groundName
+        local unitType = mission.target.droneName ~= "" and "DRONE" or "GROUND"
+        
+        mission.menuHandles.JD13 = missionCommands.addCommandForGroup(gpID, 'Lase my mark', mission.menuHandles.J1, 
+            function() JTAC.LASER.createLaserOnMarkForPlayer(mission, {jtac = jtacname, GroupPosition = mission.target.laserPos, TGT = "Mark", currentLasedTarget = "STOP"}) end)
+        
+        mission.menuHandles.JD23 = missionCommands.addCommandForGroup(gpID, 'IR my mark', mission.menuHandles.J1, 
+            function() JTAC.IR.createInfraRedOnMarkForPlayer(mission, {jtac = jtacname, GroupPosition = mission.target.irPos, TGT = "Mark", currentLasedTarget = "STOP"}) end)
+        
+        mission.menuHandles.JD14 = missionCommands.addCommandForGroup(gpID, 'Terminate lasing', mission.menuHandles.J1, 
+            function() JTAC.LASER.stopLaserForPlayer(mission) end)
+        
+        mission.menuHandles.JD24 = missionCommands.addCommandForGroup(gpID, 'Terminate IR lasing', mission.menuHandles.J1, 
+            function() JTAC.IR.stopIRForPlayer(mission) end)
+        
+        mission.menuHandles.N31 = missionCommands.addCommandForGroup(gpID, 'Illumination Bomb', mission.menuHandles.J1, 
+            function() JTAC.BILLUM.illuminationBombOnMarkForPlayer(mission, mission.target.irPos) end)
+        
+        mission.menuHandles.N32 = missionCommands.addCommandForGroup(gpID, 'Smoke my mark', mission.menuHandles.J1, 
+            function() JTAC.SMOKE.smokeOnMarkForPlayer(mission, mission.target.irPos) end)
+        
+        mission.menuHandles.JD98 = missionCommands.addCommandForGroup(gpID, 'ReScan', mission.menuHandles.J1, 
+            function() JTAC.NewMarkerScanForPlayer(mission) end)
     else
-        -- JTAC active - show normal drone/ground options
+        -- JTAC assigned and marker placed but no active units - show request options
         mission.menuHandles.JD11 = missionCommands.addCommandForGroup(gpID, 'Request Drone JTAC [20 CMD]', mission.menuHandles.J1, 
             function() JTAC.requestDroneForPlayer(mission) end)
         
@@ -2135,6 +2217,17 @@ function JTAC.setMenuForPlayer(mission)
         -- Only show DISMISS PACKAGE when there are active units to dismiss
         if (mission.target.droneName ~= "" and mission.target.droneInZone) or (mission.target.groundName ~= "" and mission.target.droneInZone) then
             mission.menuHandles.N9 = missionCommands.addSubMenuForGroup(gpID, 'DISMISS PACKAGE', mission.menuHandles.menuPrinc)
+            
+            -- Add specific dismiss commands based on what units are active
+            if mission.target.droneName ~= "" then
+                mission.menuHandles.JD99 = missionCommands.addCommandForGroup(gpID, 'Dismiss DRONE package', mission.menuHandles.N9,
+                    function() JTAC.requestDismissPackageForPlayer(mission, "DRONE") end)
+            end
+            
+            if mission.target.groundName ~= "" then
+                mission.menuHandles.JG99 = missionCommands.addCommandForGroup(gpID, 'Dismiss GROUND package', mission.menuHandles.N9,
+                    function() JTAC.requestDismissPackageForPlayer(mission, "GROUND") end)
+            end
         end
     end
     
@@ -2280,8 +2373,14 @@ local function initialize()
 
     world.addEventHandler(EVENTJTAC);
     timer.scheduleFunction(JTAC.setAvailability, nil, timer.getTime() + 1)
+    
+    -- Schedule periodic cleanup of disconnected players (every 5 minutes)
+    timer.scheduleFunction(function()
+        JTAC.cleanupDisconnectedPlayers()
+        return timer.getTime() + 300  -- Repeat every 300 seconds (5 minutes)
+    end, nil, timer.getTime() + 300)
+    
     debugMsg("JTAC LOADED!")
-
 end
 
 -- Start initialization
