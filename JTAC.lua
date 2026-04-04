@@ -7,8 +7,8 @@ local EVENTJTAC = {};
 -- =====================================================================================
 
 -- Add configuration properties to existing JTAC table (don't overwrite)
-JTAC.debug = true             -- enable debug messages in DCS log and on screen
-JTAC.production_mode = true  -- when true, disables all debug messages even if debug is true
+JTAC.debug = false             -- enable debug messages in DCS log and on screen
+JTAC.production_mode = true    -- when true, disables all debug messages even if debug is true
 
 -- Options
 JTAC.groupPrefix = false        -- restrict F10 menu to group with specific prefix
@@ -85,6 +85,26 @@ JTAC.callsign = {
         "Enfield", "Springfield", "Uzi", "Colt", "Dodge", "Ford", "Chevy", "Pontiac"
     }
 }
+
+-- =====================================================================================
+-- CONSTANTS
+-- =====================================================================================
+
+-- Laser code generation constants
+local LASER_SECOND_DIGITS = {5, 6, 7}
+local LASER_THIRD_FOURTH_DIGITS = {1, 2, 3, 4, 5, 6, 7, 8}
+local TOTAL_LASER_CODES = 3 * 8 * 8 -- 192 total possible codes
+
+-- Performance and timing constants
+local LASER_CODE_LOW_THRESHOLD = 0.25    -- 25% threshold for switching to systematic search
+local MAX_RANDOM_ATTEMPTS = 20           -- Maximum random attempts before systematic fallback
+local DISCONNECT_TIMEOUT = 300           -- Player disconnect timeout in seconds (5 minutes)
+local MENU_CREATION_DELAY = 1            -- Delay before creating menu after spawn (seconds)
+local SPAWN_OFFSET = 1000                -- Coordinate offset for unit spawning (meters)
+local DISMISS_PACKAGE_DELAY = 15         -- Delay before dismissing JTAC package (seconds)
+
+-- Message timing constants
+local CLEANUP_INTERVAL = 300             -- Cleanup disconnected players interval (seconds)
 
 -- =====================================================================================
 -- LASE AND CALLSIGN HELPER FUNCTIONS
@@ -171,11 +191,6 @@ function JTAC.getCallnameNumber(airCallsign)
     return callnameMap[base] or 3  -- Default to 3 (Uzi) if not found
 end
 
--- Laser code generation constants
-local LASER_SECOND_DIGITS = {5, 6, 7}
-local LASER_THIRD_FOURTH_DIGITS = {1, 2, 3, 4, 5, 6, 7, 8}
-local TOTAL_LASER_CODES = 3 * 8 * 8 -- 192 total possible codes
-
 -- Generate unique laser code for new missions (follow proper laser code format)
 -- First digit: always 1, Second digit: 5,6,7, Third/Fourth digits: 1-8
 function JTAC.generateUniqueLaserCode()
@@ -194,7 +209,7 @@ function JTAC.generateUniqueLaserCode()
     local availableCount = TOTAL_LASER_CODES - usedCount
     
     -- If we're running low on codes (less than 25% available), use systematic search
-    if availableCount < TOTAL_LASER_CODES * 0.25 then
+    if availableCount < TOTAL_LASER_CODES * LASER_CODE_LOW_THRESHOLD then
         for _, second in ipairs(LASER_SECOND_DIGITS) do
             for _, third in ipairs(LASER_THIRD_FOURTH_DIGITS) do
                 for _, fourth in ipairs(LASER_THIRD_FOURTH_DIGITS) do
@@ -208,7 +223,7 @@ function JTAC.generateUniqueLaserCode()
         end
     else
         -- Plenty of codes available, use efficient random selection
-        local maxAttempts = math.min(20, availableCount) -- Limit attempts based on available codes
+        local maxAttempts = math.min(MAX_RANDOM_ATTEMPTS, availableCount) -- Limit attempts based on available codes
         for attempt = 1, maxAttempts do
             local second = LASER_SECOND_DIGITS[math.random(1, #LASER_SECOND_DIGITS)]
             local third = LASER_THIRD_FOURTH_DIGITS[math.random(1, #LASER_THIRD_FOURTH_DIGITS)]
@@ -414,7 +429,7 @@ function JTAC.cleanupDisconnectedPlayers()
                 if not mission.disconnectTime then
                     mission.disconnectTime = timer.getTime()
                     debugMsg("Player " .. playerName .. " disconnected but has active JTACs, starting disconnect timer")
-                elseif timer.getTime() - mission.disconnectTime > 300 then  -- 5 minutes
+                elseif timer.getTime() - mission.disconnectTime > DISCONNECT_TIMEOUT then  -- 5 minutes
                     debugMsg("Cleaning up mission for long-disconnected player with active JTACs: " .. playerName)
                     JTAC.cleanupPlayerMission(playerName)
                 end
@@ -527,7 +542,7 @@ function EVENTJTAC:onEvent(event)
                 timer.scheduleFunction(
                     JTAC_delayedMenu,
                     args,
-                    timer.getTime() + 1
+                    timer.getTime() + MENU_CREATION_DELAY
                 )
             end
         end
@@ -713,7 +728,7 @@ end
 -- Request dismissal of active JTAC package (drone or ground) and clean up mission state
 function JTAC.requestDismissPackageForPlayer(mission, groupType)
     JTAC.MESSAGES.setMsg(mission.player .." : Mission over " .. mission.jtacCallSign .. " you can RTB. Thanks for the support.", 10, 2, true, mission.playerGroupID)
-    timer.scheduleFunction(JTAC.dismissPackageForPlayer, {mission = mission, groupType = groupType}, timer.getTime() + 15)
+    timer.scheduleFunction(JTAC.dismissPackageForPlayer, {mission = mission, groupType = groupType}, timer.getTime() + DISMISS_PACKAGE_DELAY)
     if groupType == "DRONE" and mission.target.droneName ~= "" and Group.getByName(mission.target.droneName) and Group.getByName(mission.target.droneName):getUnit(1) ~= nil then
         JTAC.MESSAGES.setMessageDelayed(mission.airCallsign .. ": Mission over RTB.", 10, 7, true)
     elseif groupType == "GROUND" and mission.target.groundName ~= "" and Group.getByName(mission.target.groundName) and Group.getByName(mission.target.groundName):getUnit(1) ~= nil then
@@ -1074,8 +1089,8 @@ function JTAC.createDroneDelayedForPlayer(mission)
                                             ["type"] = "Turning Point",
                                             ["ETA"] = 0,
                                             ["ETA_locked"] = true,
-                                            ["y"] = mission.target.laserPos.z + 1000, -- spawn coord
-                                            ["x"] = mission.target.laserPos.x + 1000, -- spawn coord
+                                            ["y"] = mission.target.laserPos.z + SPAWN_OFFSET, -- spawn coord
+                                            ["x"] = mission.target.laserPos.x + SPAWN_OFFSET, -- spawn coord
                                             ["name"] = "Initial Point",
                                             ["speed_locked"] = true,
                                             ["formation_template"] = "",
@@ -1141,8 +1156,8 @@ function JTAC.createDroneDelayedForPlayer(mission)
                                         ["unitId"] = 1,
                                         ["psi"] = 0,
                                         ["onboard_num"] = "010",
-                                        ["y"] = mission.target.laserPos.z + 1000, -- spawn coord
-                                        ["x"] = mission.target.laserPos.x + 1000,  -- spawn coord
+                                        ["y"] = mission.target.laserPos.z + SPAWN_OFFSET, -- spawn coord
+                                        ["x"] = mission.target.laserPos.x + SPAWN_OFFSET,  -- spawn coord
                                         ["name"] = mission.target.droneName,
                                         ["payload"] =
                                         {
@@ -1164,8 +1179,8 @@ function JTAC.createDroneDelayedForPlayer(mission)
                                         }, -- end of ["callsign"]
                                     }, -- end of [1]
                                 }, -- end of ["units"]
-                                ["y"] = mission.target.laserPos.z + 1000,
-                                ["x"] = mission.target.laserPos.x + 1000,
+                                ["y"] = mission.target.laserPos.z + SPAWN_OFFSET,
+                                ["x"] = mission.target.laserPos.x + SPAWN_OFFSET,
                                 ["name"] = mission.target.droneName,
                                 ["communication"] = true,
                                 ["start_time"] = 0,
@@ -1312,8 +1327,8 @@ function JTAC.createGroundDelayedForPlayer(mission)
                                         {
                                             [1] =
                                             {
-                                                ["y"] = mission.target.laserPos.z + 1000,
-                                                ["x"] = mission.target.laserPos.x + 1000,
+                                                ["y"] = mission.target.laserPos.z + SPAWN_OFFSET,
+                                                ["x"] = mission.target.laserPos.x + SPAWN_OFFSET,
                                             }, -- end of [1]
                                             [2] =
                                             {
@@ -1344,8 +1359,8 @@ function JTAC.createGroundDelayedForPlayer(mission)
                                             ["ETA"] = 0,
                                             ["alt_type"] = "BARO",
                                             ["formation_template"] = "",
-                                            ["y"] = mission.target.laserPos.z + 1000,
-                                            ["x"] = mission.target.laserPos.x + 1000,
+                                            ["y"] = mission.target.laserPos.z + SPAWN_OFFSET,
+                                            ["x"] = mission.target.laserPos.x + SPAWN_OFFSET,
                                             ["name"] = "spawn",
                                             ["ETA_locked"] = true,
                                             ["speed"] = 0,
@@ -1473,15 +1488,15 @@ function JTAC.createGroundDelayedForPlayer(mission)
                                         ["coldAtStart"] = false,
                                         ["type"] = "M1045 HMMWV TOW",
                                         ["unitId"] = 1,
-                                        ["y"] = mission.target.laserPos.z + 1000,
-                                        ["x"] = mission.target.laserPos.x + 1000,
+                                        ["y"] = mission.target.laserPos.z + SPAWN_OFFSET,
+                                        ["x"] = mission.target.laserPos.x + SPAWN_OFFSET,
                                         ["name"] = mission.groundCallsign,
                                         ["heading"] = 0,
                                         ["playerCanDrive"] = true,
                                     }, -- end of [1]
                                 }, -- end of ["units"]
-                                ["y"] = mission.target.laserPos.z + 1000,
-                                ["x"] = mission.target.laserPos.x + 1000,
+                                ["y"] = mission.target.laserPos.z + SPAWN_OFFSET,
+                                ["x"] = mission.target.laserPos.x + SPAWN_OFFSET,
                                 ["name"] = mission.target.groundName,
                                 ["start_time"] = 0,
                         }
@@ -2414,17 +2429,17 @@ end
 -- Initialize the script
 local function initialize()
     debugMsg("========================================")
-    debugMsg("JTAC Script v0.2 Initializing...")
+    debugMsg("JTAC Script v0.3 Initializing...")
     debugMsg("========================================")
 
     world.addEventHandler(EVENTJTAC);
-    timer.scheduleFunction(JTAC.setAvailability, nil, timer.getTime() + 1)
+    timer.scheduleFunction(JTAC.setAvailability, nil, timer.getTime() + MENU_CREATION_DELAY)
     
     -- Schedule periodic cleanup of disconnected players (every 5 minutes)
     timer.scheduleFunction(function()
         JTAC.cleanupDisconnectedPlayers()
-        return timer.getTime() + 300  -- Repeat every 300 seconds (5 minutes)
-    end, nil, timer.getTime() + 300)
+        return timer.getTime() + CLEANUP_INTERVAL  -- Repeat every 300 seconds (5 minutes)
+    end, nil, timer.getTime() + CLEANUP_INTERVAL)
     
     debugMsg("JTAC LOADED!")
 end
