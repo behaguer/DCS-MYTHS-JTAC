@@ -171,27 +171,73 @@ function JTAC.getCallnameNumber(airCallsign)
     return callnameMap[base] or 3  -- Default to 3 (Uzi) if not found
 end
 
--- Generate unique laser code for new missions (1111-1788 range, prefer 1688)
+-- Laser code generation constants
+local LASER_SECOND_DIGITS = {5, 6, 7}
+local LASER_THIRD_FOURTH_DIGITS = {1, 2, 3, 4, 5, 6, 7, 8}
+local TOTAL_LASER_CODES = 3 * 8 * 8 -- 192 total possible codes
+
+-- Generate unique laser code for new missions (follow proper laser code format)
+-- First digit: always 1, Second digit: 5,6,7, Third/Fourth digits: 1-8
 function JTAC.generateUniqueLaserCode()
-    -- Try preferred code first
+    -- Try preferred code first (1688)
     if not JTAC.UsedLaserCodes["1688"] then
         JTAC.UsedLaserCodes["1688"] = true
         return "1688"
     end
     
-    -- Try other codes in range 1111-1788
-    for code = 1111, 1788 do
-        local codeStr = tostring(code)
-        if not JTAC.UsedLaserCodes[codeStr] then
-            JTAC.UsedLaserCodes[codeStr] = true
-            return codeStr
+    -- Count used codes to determine strategy
+    local usedCount = 0
+    for _ in pairs(JTAC.UsedLaserCodes) do
+        usedCount = usedCount + 1
+    end
+    
+    local availableCount = TOTAL_LASER_CODES - usedCount
+    
+    -- If we're running low on codes (less than 25% available), use systematic search
+    if availableCount < TOTAL_LASER_CODES * 0.25 then
+        for _, second in ipairs(LASER_SECOND_DIGITS) do
+            for _, third in ipairs(LASER_THIRD_FOURTH_DIGITS) do
+                for _, fourth in ipairs(LASER_THIRD_FOURTH_DIGITS) do
+                    local codeStr = "1" .. second .. third .. fourth
+                    if not JTAC.UsedLaserCodes[codeStr] then
+                        JTAC.UsedLaserCodes[codeStr] = true
+                        return codeStr
+                    end
+                end
+            end
+        end
+    else
+        -- Plenty of codes available, use efficient random selection
+        local maxAttempts = math.min(20, availableCount) -- Limit attempts based on available codes
+        for attempt = 1, maxAttempts do
+            local second = LASER_SECOND_DIGITS[math.random(1, #LASER_SECOND_DIGITS)]
+            local third = LASER_THIRD_FOURTH_DIGITS[math.random(1, #LASER_THIRD_FOURTH_DIGITS)]
+            local fourth = LASER_THIRD_FOURTH_DIGITS[math.random(1, #LASER_THIRD_FOURTH_DIGITS)]
+            local codeStr = "1" .. second .. third .. fourth
+            
+            if not JTAC.UsedLaserCodes[codeStr] then
+                JTAC.UsedLaserCodes[codeStr] = true
+                return codeStr
+            end
+        end
+        
+        -- Random attempts failed, fall back to systematic (shouldn't happen often)
+        for _, second in ipairs(LASER_SECOND_DIGITS) do
+            for _, third in ipairs(LASER_THIRD_FOURTH_DIGITS) do
+                for _, fourth in ipairs(LASER_THIRD_FOURTH_DIGITS) do
+                    local codeStr = "1" .. second .. third .. fourth
+                    if not JTAC.UsedLaserCodes[codeStr] then
+                        JTAC.UsedLaserCodes[codeStr] = true
+                        return codeStr
+                    end
+                end
+            end
         end
     end
     
-    -- Fallback if we somehow run out of codes in range
-    local rndCode = tostring(math.random(1111, 1788))
-    JTAC.UsedLaserCodes[rndCode] = true
-    return rndCode
+    -- This should never happen with 192 possible codes
+    debugMsg("ERROR: All laser codes exhausted! This should not happen.")
+    return "1688" -- Fallback to default
 end
 
 -- Generate unique JTAC call sign with phonetic and laser code
